@@ -1,3 +1,13 @@
+/**
+ * @file Schellling_s.c
+ * @author Team: Bosco, Cavoto, Ungolo
+ * @brief Versione PAPI
+ * @version 0.1
+ * @date 2022-04-12
+ * 
+ * @copyright Copyright (c) 2022
+ * 
+ */
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -74,7 +84,10 @@ int main(int argc, char** argv){
     wallClock_start = MPI_Wtime();
     papi_time_start = PAPI_get_real_usec();
 
-    // ALGORITMO
+    /**
+     * @brief Inizio Algoritmo
+     * 
+     */
     unhappy_spots=check_agents(board, unhappy_spots, rows, cols, threshold);
     // per verificare che l'algoritmo termini verifichiamo che non ci siano unhappy all'interno del vettore unhappy_spots e che non vengano 
     // superate le iterazioni massime previste.
@@ -118,20 +131,17 @@ int main(int argc, char** argv){
     return 0;
 }
 
-/* Determina se l'elemento nella matrice è unhappy o happy
+/* @brief Determina se l'elemento nella matrice è unhappy o happy
 *
-* Parametri:
-*  board: la matrice di tutti gli elementi
-*  row: la riga che contiene l'elemento
-*  col: la colonna che contiene l'elemento
-*  rows: numero di righe della board
-*  cols: numero di colonne della board
-*  threshold: soglia per determinare se l'elemento è happy o unhappy
-*  type: il tipo di elemento preso in considerazione (WHITE, BLACK o EMPTY)
+*  @param board: la matrice di tutti gli elementi
+*  @param row: la riga che contiene l'elemento
+*  @param col: la colonna che contiene l'elemento
+*  @param rows: numero di righe della board
+*  @param cols: numero di colonne della board
+*  @param threshold: soglia per determinare se l'elemento è happy o unhappy
+*  @param type: il tipo di elemento preso in considerazione (WHITE, BLACK o EMPTY)
 *
-* Ritorna:
-*  1 se l'elemento risulta felice
-*  0 altrimenti
+*  @return 1 se l'elemento risulta felice, 0 altrimenti
 */
 int check_placement(char* board, int row, int col, int rows, int cols, double threshold, char type){
     //se il type del carattere è lo spazio vuoto allora sarà sicuramente felice
@@ -222,14 +232,13 @@ int check_placement(char* board, int row, int col, int rows, int cols, double th
     else{return 1;}
 }
 
-/* Conta il numero di elementi unhappy rimasti nella board
+/* 
+* @brief Conta il numero di elementi unhappy rimasti nella board
 *
-* Parametri:
-*  unhappy_spots: array contenente le posizioni degli elementi unhappy all'interno della board
-*  num_chars: dimensione del array unhappy_spots
+* @param unhappy_spots: array contenente le posizioni degli elementi unhappy all'interno della board
+* @param num_chars: dimensione del array unhappy_spots
 *
-*  Ritorna:
-*   il numero di elementi unhappy presenti nella board
+* @return il numero di elementi unhappy presenti nella board
 */
 int count_unhappy(int*unhappy_spots, int num_chars){
     int i;
@@ -243,15 +252,13 @@ int count_unhappy(int*unhappy_spots, int num_chars){
 }
 
 /*
-*Verifica se all'interno della board ci sono elementi unhappy
+* @brief Verifica se all'interno della board ci sono elementi unhappy
 *
-*Parametri:
-* board: matrice che contiene lo stato del sistema
-* rows: numero di righe della board
-* cols: numero di colonne della board
+* @param board: matrice che contiene lo stato del sistema
+* @param rows: numero di righe della board
+* @param cols: numero di colonne della board
 *
-* Ritorna:
-* unhappy_spots, vettore contenente le posizioni all'interno della board degli elementi unhappy.
+* @return unhappy_spots, vettore contenente le posizioni all'interno della board degli elementi unhappy.
 */
 int* check_agents(char*board, int* unhappy_spots,int rows, int cols, double threshold){
     char type;
@@ -270,17 +277,16 @@ int* check_agents(char*board, int* unhappy_spots,int rows, int cols, double thre
     return unhappy_spots;
 }
 
-/* Sposta un elemento non felice nel più vicino spazio libero 
+/* 
+* @brief Sposta un elemento non felice nel più vicino spazio libero 
 *
-*Parametri:
-* board: matrice contenente lo stato del sistema
-* int row: riga contenente l'elemento che si vuole spostare
-* int col: colonna contenente l'elemento che si vuole spostare
-* rows: numero di righe della board
-* cols: numero di colonne della board
+* @param board: matrice contenente lo stato del sistema
+* @param int row: riga contenente l'elemento che si vuole spostare
+* @param col: colonna contenente l'elemento che si vuole spostare
+* @param rows: numero di righe della board
+* @param cols: numero di colonne della board
 *
-* Ritorna:
-* la board aggiornata
+* @return la board aggiornata
 */
 char* move_placement(char*board, int row, int col, int rows, int cols){
     int current_position = row*cols+col;
@@ -307,12 +313,12 @@ char* move_placement(char*board, int row, int col, int rows, int cols){
     return board;
 }
 
-/* Stampa lo stato corrente della board
+/* 
+* @brief Stampa lo stato corrente della board
 *
-* Parametri:
-*  board: la matrice contenente lo stato del sistema
-*  rows: numero di righe della board
-*  cols: numero di colonne della board
+* @param board: la matrice contenente lo stato del sistema
+* @param rows: numero di righe della board
+* @param cols: numero di colonne della board
 */
 void print_board(char* board, int rows, int cols){
     int i, j;
@@ -325,3 +331,4 @@ void print_board(char* board, int rows, int cols){
 
     return;
 }
+

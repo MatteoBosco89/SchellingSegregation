@@ -1,9 +1,3 @@
-/* A simulation of the schelling segregation model
- *
- * Authors: Sydney Finkelstein, Annabel Winters-McCabe
- *
-*/
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
@@ -11,13 +5,13 @@
 #include <papi.h>
 #include <mpi.h>
 
-#define ROW 10000		//numero di totale di righe della matrice per la strong, numero di righe per ogni processo per la weak
+#define ROW 10000	//numero di totale di righe della matrice per la strong, numero di righe per ogni processo per la weak
 #define COL 10000	//numero di colonne della matrice
-#define ITER 200
-#define WHITE '1'
-#define BLACK '2'
-#define EMPTY '0'
-#define THRESHOLD 0.0001
+#define ITER 200    //numero di iterazioni 
+#define WHITE '1'   //carattere che rappresenta la prima parte della popolazione
+#define BLACK '2'   //carattere che rappresenta la seconda parte della popolazione
+#define EMPTY '0'   //carattere che rappresenta gli spazi vuoti nella board
+#define THRESHOLD 0.0001 //valore soglia per distinguere lo stato di felicità da quello di infelicità
 
 int check_placement(char* board, int row, int col, int num_rows, int num_cols, double threshold, char type);
 int count_unhappy(int*unhappy_spots, int num_chars);
@@ -65,14 +59,13 @@ int main(int argc, char** argv){
     }
     //print_board(board, rows, cols);
     fclose(fp);
-    //allocate space for an array containing which spots in the board are
-    //unhappy
+    //allochiamo un vettore per memorizzare la posizione nella board degli elementi non felici
     int* unhappy_spots = (int*) malloc((num_p + num_d)*sizeof(int));
 
     int current_row;
     int current_col;
 
-    //fill board with -1's before checking which are happy and unhappy
+    //settiamo il vettore degli unhappy a -1
     for (j=0; j < num_p + num_d; j++){
         unhappy_spots[j]=-1;
     }
@@ -83,6 +76,10 @@ int main(int argc, char** argv){
 
     // ALGORITMO
     unhappy_spots=check_agents(board, unhappy_spots, rows, cols, threshold);
+    // per verificare che l'algoritmo termini verifichiamo che non ci siano unhappy all'interno del vettore unhappy_spots e che non vengano 
+    // superate le iterazioni massime previste.
+    // Poichè il vettore viene ad ogni iterazione resettato a -1 e ripopolato, se il primo elemento del vettore resta -1 significa
+    // che non sono stati trovati elementi unhappy e quindi abbiamo raggiunto la soluzione ottima
     while(unhappy_spots[0] != -1 && num_iterations > 0){
         for(i = 0; i < num_p + num_d; i++){
             if(unhappy_spots[i]!=-1){
@@ -110,40 +107,39 @@ int main(int argc, char** argv){
     if(unhappy_spots[0] != -1) printf("La soluzione trovata non e\' ottima\n\n");
     else printf("La soluzione trovata e\' ottima, iterazioni restanti = %d \n", num_iterations);
     printf("Elementi non felici: %d \n", count_unhappy(unhappy_spots, num_d + num_p));
+
     free(unhappy_spots);
     free(board);
     unhappy_spots=NULL;
     board = NULL;
+
     printf ("Tempo di esecuzione (secondi): %f\n",wallClock_stop - wallClock_start);
     printf ("Tempo di esecuzione PAPI (microsecondi): %d\n",papi_time_stop - papi_time_start);
     return 0;
 }
 
-/* Determines whether the character at the given spot in the board is happy or
-* unhappy.
+/* Determina se l'elemento nella matrice è unhappy o happy
 *
-* Parameters:
-*  board: the allocated array representing the
-*      board full of chars and empty spaces
-*  row: integer representing the row of the given character
-*  col: integer representing the column of the given character
-*  rows: integer representing the total number of rows in the board
-*  cols: integer representing the total number of columns in the board
-*  threshold: floating point number representing the threshold to determine
-*      whether the given spot can be considered unhappy
-*  type: character that is the character at the given spot
+* Parametri:
+*  board: la matrice di tutti gli elementi
+*  row: la riga che contiene l'elemento
+*  col: la colonna che contiene l'elemento
+*  rows: numero di righe della board
+*  cols: numero di colonne della board
+*  threshold: soglia per determinare se l'elemento è happy o unhappy
+*  type: il tipo di elemento preso in considerazione (WHITE, BLACK o EMPTY)
 *
-* Returns:
-*  returns 1 if the character in the given spot in the board is happy,
-*    and 0 if it is unhappy
+* Ritorna:
+*  1 se l'elemento risulta felice
+*  0 altrimenti
 */
 int check_placement(char* board, int row, int col, int rows, int cols, double threshold, char type){
-    //if the character at that spot is empty, the spot is considered happy
+    //se il type del carattere è lo spazio vuoto allora sarà sicuramente felice
     if (type == ' '){return 1;}
     float count_same=0.0;
     float count_different=0.0;
 
-    //initialize variables that represent the given spot's neighbors
+    //inizializziamo le variabili per prendere le 8 posizioni confinanti con l'elemento considerato
     int right = row*cols+col+1;
     int left = row*cols+col-1;
     int bottom = (row+1)*cols+col;
@@ -153,74 +149,72 @@ int check_placement(char* board, int row, int col, int rows, int cols, double th
     int bottom_right = (row+1)*cols+col+1;
     int bottom_left = (row+1)*cols+col-1;
 
-    //if not the top row
+    //Controlliamo la riga superiore
     if(row!=0){
-        //check above
+        //elemento sopra
         if(board[top]!=' '){
             if(board[top]==type){count_same++;}
             else{count_different++;}
         }
-        //if not left column
+        //controlliamo la colonna a sinistra
         if(col!=0){
-        //check top left
+        //controlliamo l'elemento in alto a sinistra
             if(board[top_left]!=' '){
                 if(board[top_left]==type){count_same++;}
                 else{count_different++;}
             }
         }
-        //if not right column
+        //controlliamo la colonna a destra
         if(col!=cols-1){
-        //check top right
+        //controlliamo l'elemento in alto a destra
             if(board[top_right]!=' '){
                 if(board[top_right]==type){count_same++;}
                 else{count_different++;}
             }
         }
     }
-    //if not bottom row
+    //controlliamo la riga sotto
     if(row!=rows-1){
-    //check below
+    //controlliamo l'elemento sotto
         if(board[bottom]!=' '){
             if(board[bottom]==type){count_same++;}
             else{count_different++;}
         }
-        //if not left column
+        //controlliamo la colonna a sinistra
         if(col!=0){
-        //check bottom left
+        //controlliamo l'elemento in basso a sinistra
             if(board[bottom_left]!=' '){
                 if(board[bottom_left]==type){count_same++;}
                 else{count_different++;}
             }
         }
-        //if not right column
+        //controlliamo la colonna a destra
         if(col!=cols-1){
-        //check bottom right
+        //controlliamo l'elemento in basso a destra
             if(board[bottom_right]!=' '){
                 if(board[bottom_right]==type){count_same++;}
                 else{count_different++;}
             }
         }
     }
-    //if not left column
+    //controlliamo gli elementi a destra e sinistra
     if(col!=0){
-    //check left
+    //controlliamo a sinistra
         if(board[left]!=' '){
             if (board[left]==type){count_same++;}
             else{count_different++;}
         }
     }
-    //if not right column
     if(col!=cols-1){
-    //check right
+    //controlliamo a destra
         if (board[right]!=' '){
             if (board[right]==type){count_same++;}
             else{count_different++;}
         }
     }
-
-    //divide the number of the spot's neighbors that are the same as the given
-    //spot by the total number of neighbors that are characters and compare to
-    //threshold
+    //per verificare se un elemento è felice oppure no andiamo a contare gli elementi adiacenti che sono simili e diversi
+    //e calcoliamo il rapporto (uguali/(uguali+diversi))->(count_same/(count_same+count_different))
+    //tale valore vinene confrontato con il threshold. se è inferiore allora l'elemento è unhappy, altrimenti è happy
     double amt_same;
     amt_same = count_same/(count_same+count_different);
     if(count_same + count_different == 0) return 1;
@@ -228,18 +222,14 @@ int check_placement(char* board, int row, int col, int rows, int cols, double th
     else{return 1;}
 }
 
-/* Checks whether the board still has unhappy characters, or whether all unhappy
-* characters from the round have been moved
+/* Conta il numero di elementi unhappy rimasti nella board
 *
-* Parameters:
-*  unhappy_spots: dynamically allocated int array representing which spots in
-*    the board are unhappy and which are happy. Unhappy_spots contains a
-*    placeholder of -1 where the spots are happy
-*  num_chars: integer representing the total number of characters in the board
+* Parametri:
+*  unhappy_spots: array contenente le posizioni degli elementi unhappy all'interno della board
+*  num_chars: dimensione del array unhappy_spots
 *
-*  Return:
-*  1 if there is at least one dissatisifed agent left on the board, 0 if there
-*  are none.
+*  Ritorna:
+*   il numero di elementi unhappy presenti nella board
 */
 int count_unhappy(int*unhappy_spots, int num_chars){
     int i;
@@ -253,17 +243,15 @@ int count_unhappy(int*unhappy_spots, int num_chars){
 }
 
 /*
-*Checks the board for dissatisfied agents and returns an array of their indices
+*Verifica se all'interno della board ci sono elementi unhappy
 *
-*Parameters:
-* board: dynamically allocated 2D array representing the state of the simulation
-* unhappy_spots:dynamically allocated int array representing which spots in
-*    the board are unhappy and which are happy
-* rows: integer representing the # of rows in the board.
-* cols: integer representing the # of columns in the board.
+*Parametri:
+* board: matrice che contiene lo stato del sistema
+* rows: numero di righe della board
+* cols: numero di colonne della board
 *
-* Return:
-* unhappy_spots
+* Ritorna:
+* unhappy_spots, vettore contenente le posizioni all'interno della board degli elementi unhappy.
 */
 int* check_agents(char*board, int* unhappy_spots,int rows, int cols, double threshold){
     char type;
@@ -282,24 +270,21 @@ int* check_agents(char*board, int* unhappy_spots,int rows, int cols, double thre
     return unhappy_spots;
 }
 
-/* Moves a dissatisfied agent to the nearest open spot, wrapping around to the
-* beginning index of the board if necessary.
+/* Sposta un elemento non felice nel più vicino spazio libero 
 *
-*Parameters:
-* board: dynamically allocated 2D array representing the state of the simulation
-* unhappy_spots:dynamically allocated int array representing which spots in
-*    the board are unhappy and which are happy
-* int row: current x coordinate of the agent to be moved
-* int col: current y coordinate of the agent to be moved
-* rows: integer representing the # of rows in the board.
-* cols: integer representing the # of columns in the board.
+*Parametri:
+* board: matrice contenente lo stato del sistema
+* int row: riga contenente l'elemento che si vuole spostare
+* int col: colonna contenente l'elemento che si vuole spostare
+* rows: numero di righe della board
+* cols: numero di colonne della board
 *
-* Return:
-* an updated board
+* Ritorna:
+* la board aggiornata
 */
 char* move_placement(char*board, int row, int col, int rows, int cols){
     int current_position = row*cols+col;
-    //while the current_position has not yet reached the end of the board
+    //fin tanto che la posizione corrente non ha raggiunto la fine della board
     while (current_position < rows*cols-1){
         current_position++;
         if (board[current_position] == ' '){
@@ -308,9 +293,8 @@ char* move_placement(char*board, int row, int col, int rows, int cols){
             return board;
         }
     }
-    //if the position has reached the end of the board without finding an open
-    //spot, wrap around to the beginning of the board and look from there until
-    //the original position
+    //se la posizione ha raggiunto la fine della board senza trovare posto, torna
+    //all'inizio dell board e cerca da lì fino alla posizione originale
     current_position=0;
     while (current_position<row*cols+col){
         if (board[current_position] == ' '){
@@ -323,15 +307,12 @@ char* move_placement(char*board, int row, int col, int rows, int cols){
     return board;
 }
 
-/* Prints the current state of the board
+/* Stampa lo stato corrente della board
 *
-* Parameters:
-*  board: dynamically allocated char array representing the current state of
-*    the board
-*  rows: integer representing the total number of rows
-*  cols: integer representing the total number of columns
-*
-* Return: none
+* Parametri:
+*  board: la matrice contenente lo stato del sistema
+*  rows: numero di righe della board
+*  cols: numero di colonne della board
 */
 void print_board(char* board, int rows, int cols){
     int i, j;

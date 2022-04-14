@@ -4,180 +4,158 @@
 #include <time.h>
 #include <string.h>
 
-#define SOGLIA 0.7			//soglia di soddisfazione degli agenti
-#define S 100				//numero massimo di giri
-#define RIGHE 10000			//numero di totale di righe della matrice per la strong, numero di righe per ogni processo per la weak
-#define COLONNE 10000		//numero di colonne della matrice
+#define THRESHOLD 0.7		//soglia di soddisfazione degli elementi
+#define S 100				//numero massimo di iterazioni
+#define ROWS 10000			//numero di totale di righe della matrice
+#define COLUMNS 10000		//numero di colonne della matrice
 #define WHITE '1'
 #define BLACK '2'
 #define EMPTY '0'
 
 void exchangeRow(int* sendFirst, int* recvFirst, int* sendLast, int* recvLast, int rank, int numtasks, MPI_Request* recvRequest);
 
-int* push(int* stack[], int dimensione, int* elemento, int* top);
+int* push(int* stack[], int dimension, int* element, int* top);
 int* pop(int* stack[], int* top);
 
-int* pushQueue(int* queue[], int dimensione, int* elemento, int* head, int* tail, int* numElements);
-int* popQueue(int* queue[], int dimensione, int* head, int* tail, int* numElements);
+int* pushQueue(int* queue[], int dimension, int* element, int* head, int* tail, int* numElements);
+int* popQueue(int* queue[], int dimension, int* head, int* tail, int* numElements);
 
-void readFile();
+int readFile(char* filename);
 
+int** temp_matrix;
 
 int main() {
 	int	numtasks, rank
-		, righe, resto, divisione													//variabili per la conformazione della matrice e sottomatrice quando si esegue il programma in modalit‡ diverse
-		, righetot																	//le righe complessive della matrice, cambiano in base a weak o strong
-		, tag = 1, sorgente = 0, destinatario										//variabili per le comunicazioni sulla suddivisione della matrice iniziale
-		, numGiro = 1																//numGiro= numero di giro attuale
-		, numVuoti = 0, numInsoddisfatti = 0										//numVuoti: contatore celle vuote e head dello stack "empty", numInsoddisfatti= contatore celle insoddisfatte di tutta la sottomatrice 
-		, numVicini=0, uguali = 0, conflitti = 0, percentuale, sogliaConflitti = SOGLIA	//per il calcolo della percentuale di ogni cella, conflitti tiene traccia dei conflitti generati in ogni cella (a differenza di numInsoddisfatti che tiene traccia del totale)
-		, k = 0																		//k= head dello stack "irregular" per le celle insoddisfatte
-		, head=0, tail=0															//contengono gli indici per gestire la coda degli elementi vuoti
-		, termina=0, conferma=0;													//valori utili per la terminazione dei processi
+		, rows, change, division 
+		, rowstot
+		, tag = 1, source = 0, destination	//variabili per le comunicazioni sulla suddivisione della matrice iniziale
+		, iteration = 1	//contatore iterazioni
+		, num_empty = 0, unhappy = 0//num_empty: contatore celle vuote e head dello stack "empty", unhappy = contatore celle insoddisfatte di tutta la sub_matrix 
+		, num_near=0, num_equals = 0, num_diff = 0, amt_same, threshold = THRESHOLD	//variabili per il calcolo del grado di soddisfazione
+		, k = 0	//k= head dello stack "irregular" per le celle insoddisfatte
+		, head=0, tail=0//contengono gli indici per gestire la coda degli elementi vuoti
+		, end=0, check=0;//variabili per la terminazione dei processi
 	
 	MPI_Init(NULL, NULL);
 	MPI_Comm_size(MPI_COMM_WORLD, &numtasks);
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-	
-	divisione = RIGHE / numtasks;	//numero di righe per ogni processo
-	resto = RIGHE % numtasks;		//conta le righe "superflue" da dividere ogni per processo
-	righetot = RIGHE;				//nella strong le righe indicate sono quelle totali
-	if (rank < resto)
-		righe = divisione + 1;		//I primi "resto" processi avranno una riga in pi˘
+
+	/*
+	*@brief calcolo delle righe da inviare ad ogni proesso
+	*/
+	division = ROWS / numtasks;		//numero di righe per ogni processo
+	change = ROWS % numtasks;		//conta le righe "superflue" da dividere ogni per processo
+	rowstot = ROWS;	
+	if (rank < change)
+		rows = division + 1;		//I primi "change" processi avranno una riga in pi√π
 	else
-		righe = divisione;
+		rows = division;
 	
-	//alloco la sottomatrice per ogni processo
-	int** sottomatrice = (int**) malloc(righe*sizeof(int*));
-	sottomatrice[0] = (int*)malloc(righe * COLONNE * sizeof(int));
+	/*
+	*@brief allocazione della sub_matrix per ogni processo
+	*/
+	int** sub_matrix = (int**) malloc(rows*sizeof(int*));
+	sub_matrix[0] = (int*)malloc(rows * COLUMNS * sizeof(int));
 	int i, j;
-	for (i = 1; i < righe; i++)
-		sottomatrice[i] = sottomatrice[0] + i * COLONNE;
+	for (i = 1; i < rows; i++)
+		sub_matrix[i] = sub_matrix[0] + i * COLUMNS;
 	
-	//alloco la riga dei dati provenienti predecessore e dal successore
-	int* rigaPred = malloc(COLONNE * sizeof(int));
-	int* rigaSucc = malloc(COLONNE * sizeof(int));
+	/*
+	*@brief alloco le righe adiacenti inferiori e superiori che vengono inviate dagli altri processi
+	*/
+	int* row_pred = malloc(COLUMNS * sizeof(int));
+	int* row_succ = malloc(COLUMNS * sizeof(int));
 
-	//stack e coda di puntatori per le celle vuote o insoddisfatte
-	int dimPuntatori = (righe * COLONNE);					//la dimensione dell'array puntatori Ë pari alla dimensione della sottomatrice (caso peggiore = sottomatrice di solo spazi o con tutti irregolari e senza spazi)
-	int** empty = malloc(dimPuntatori * sizeof(int*));		//coda con puntatori alle celle vuote della sottomatrice
-	int** irregular = malloc(dimPuntatori * sizeof(int*));	//stack con puntatori alle celle irregolari della sottomatrice
+	/*
+	*@brief allocazione stack e coda delle celle insoddisfatte (unhappy)
+	*/
+	int dim_pointers = (rows * COLUMNS);//la dimension dell'array puntatori √® pari alla dimension della sub_matrix (caso peggiore = sub_matrix di solo spazi o con tutti irregolari e senza spazi)
+	int** empty = malloc(dim_pointers * sizeof(int*));		//coda con puntatori alle celle vuote della sub_matrix
+	int** irregular = malloc(dim_pointers * sizeof(int*));	//stack con puntatori alle celle irregolari della sub_matrix
 	
+
 	//tutti i processi utilizzano interamente recvRequest per lo scambio delle righe di confine tranne lo 0 e l'ultimo
-	MPI_Request recvRequest[2];								//in [0] la ricezione della riga di confine dal predecessore, da [1] la ricezione del successore
+	MPI_Request recvRequest[2];	//in [0] la ricezione della riga di confine dal predecessore, da [1] la ricezione del successore
 	
-	//inizio la misurazione del tempo
-	clock_t begin, end;
+	
+	//inserire papi
+	clock_t begin, end_time;
+
 	MPI_Barrier(MPI_COMM_WORLD);
-	//begin = clock();
 
-//LOGICA DI GENERAZIONE E DISTRIBUZIONE DELLA MATRICE
+	/*
+	*@brief CARICAMENTO ED INVIO DELLE SOTTOMATRICI
+	*/
 	if (rank == 0) {
-		FILE *file;
-		printf("carico file\n");
-		int ** temp_matrix = (int **)malloc(RIGHE*sizeof(int*));
-		temp_matrix[0] = (int *)malloc(RIGHE*COLONNE*sizeof(int));
-		for(i = 1; i < RIGHE; i++){
-			temp_matrix[i] = temp_matrix[0] + i * COLONNE;
-		}
-		file = fopen("board.txt", "r");
-		if(file == NULL){
-			printf("File non trovato");
-			return -1;
-		}
-		char c;
-		int temp;
-		printf("righe allocate, alloco colonne\n");
-		for(i = 0; i < RIGHE; i++){
-			for(j = 0; j < COLONNE; j++){
-				fscanf(file, "%c", &c);
-				if(c == EMPTY) temp = 0;
-				if(c == WHITE) temp = 1;
-				else temp = 2;
-				temp_matrix[i][j] = temp;
-			}
-			fscanf(file, "%c", &c);
-		}
-		fclose(file);
-		printf("chiudo file\n");
-		begin = clock();
-		//int buffer[COLONNE];
-		int	i, j, numMessaggi = 0; 
-		//per numeri pseudocasuali differenti ad ogni esecuzione
-		//time_t t;
-		//srand((unsigned)time(&t));
 
-		//numeri pseudocasuali uguali per ogni esecuzione, per i test
-		srand((unsigned int)rank); 
+		int load = readFile("board.txt");
+
+		//se non trovo il file termino
+		if(load == -1) return -1;
+
+		//sostituire con papi
+		begin = clock();
+		int	i, j, num_msg = 0; 
 
 		MPI_Request request[numtasks];
-		destinatario = 0;
-		printf("\nInizio la generazione e distribuzione della matrice\n");
-		//Per evitare l'aggiunta di controlli ad ogni riga della matrice che viene generata:
-		//utilizzo due for innestati: il primo riguarda la generazione dei dati che andranno processo 0 (senza send)
-		//e l'altro con quelli che andranno anche inviati (con send al processo adatto, per ogni riga generata)
-		printf("allocazione sottomatrice\n");
-		for (i = 0; i < righe; i++) {
-			for (j = 0; j < COLONNE; j++) {
-				//buffer[j]= rand() % 3;
-				sottomatrice[i][j] = temp_matrix[i][j];
-				//printf("[%d]", buffer[j]);
+		destination = 0;
+		printf("\nInizio la distribuzione della matrice\n");
+
+		//creo la sub matrix per il processo rank = 0
+		for (i = 0; i < rows; i++) {
+			for (j = 0; j < COLUMNS; j++) {
+				sub_matrix[i][j] = temp_matrix[i][j];
 			}
-			//printf("\n");
 		}
-		printf("inizio invio righe\n");
-		for (i=0; i < righetot;i++) {
-			//for (j = 0; j < COLONNE; j++) {
-			//	buffer[j] = rand() % 3;
-				//printf("[%d]", buffer[j]);
-			//}
-			//printf("\n");
-			//invia una riga in pi˘ al destinatario a cui spetta
-			if (destinatario < resto) { 
-				if (numMessaggi == divisione+1) {
-					numMessaggi = 0;
-					destinatario++;
+		//invio le righe ai processi con rank != 0
+		for (i=0; i < rowstot;i++) {
+			if (destination < change) { 
+				if (num_msg == division+1) {
+					num_msg = 0;
+					destination++;
 				}
 			}
 			else {
-				if (numMessaggi == divisione) {
-					numMessaggi = 0;
-					destinatario++;
+				if (num_msg == division) {
+					num_msg = 0;
+					destination++;
 				}
 			}
-			//ho provato ad effettuare il pack e l'unpack dei dati per ridurre il numero di send ma non comportavano un risparmio di operazioni...
-			//siccome invece che una send e receive per ogni riga si faceva il pack e l'unpack di ogni riga + send e receive per ogni blocco di righe.
 		
-			MPI_Isend(temp_matrix[i], COLONNE, MPI_INT, destinatario, tag, MPI_COMM_WORLD, &request[destinatario]);
-			numMessaggi++;
+			MPI_Isend(temp_matrix[i], COLUMNS, MPI_INT, destination, tag, MPI_COMM_WORLD, &request[destination]);
+			num_msg++;
 
 		}
-		printf("Generazione conclusa, procedo con la seconda fase del processo\n\n");
+		printf("Invio concluso, procedo con la seconda fase del processo\n\n");
 	}
-	else {									//I processi non root ricevono le righe che gli spettano e le salvano nella sottomatrice
+	else {	//I processi non root ricevono le righe che gli spettano e le salvano nella sub_matrix
 		MPI_Status stat;
-		for (i = 0; i < righe; i++) {
-			MPI_Recv(&sottomatrice[i][0], COLONNE, MPI_INT, sorgente, tag, MPI_COMM_WORLD, &stat);
-			//for (int j = 0; j < COLONNE; j++)
-				//printf("{%d}[%d], ", rank, sottomatrice[i][j]);
+		for (i = 0; i < rows; i++) {
+			MPI_Recv(&sub_matrix[i][0], COLUMNS, MPI_INT, source, tag, MPI_COMM_WORLD, &stat);
 		}
 	}
-	//printf("invio delle righe adiacenti\n");
-	if(numtasks > 1)						//scambio delle righe di confine con i processi vicini
-		exchangeRow(&sottomatrice[0][0], rigaSucc, &sottomatrice[righe - 1][0], rigaPred, rank, numtasks, recvRequest);
-//	printf("Fine invio delle righe adiacenti rank %d\n", rank);
-//LOGICA PER LA VERIFICA DELLA SODDISFAZIONE DEGLI AGENTI E DEI LORO SPOSTAMENTI
-	//dichiaro i puntatori utilizzati per i cambi di posizione delle celle
-	int* irregolare = (int*)malloc(sizeof(int));	
-	int* vuoto = (int*)malloc(sizeof(int));
 
-	while (numGiro <= S) {
-		//scorri la sottomatrice alla ricerca di agenti insoddisfatti e tieni traccia di questi con lo stack di puntatori
-		//tieni traccia con una coda circolare di puntatori anche delle caselle vuote della sottomatrice che verranno usate per eventuali spostamenti
-		numInsoddisfatti = 0;		//ad ogni giro ricalcolo gli insoddisfatti della sottomatrice
-		//if(numGiro % 10 == 0)printf("Rank %d, Iterazione %d\n", rank, numGiro);
-		//printf("rank %d, iterazione %d\n", rank, numGiro);
-		//controlla di avere i dati degli scambi degli array di confine
+	free(temp_matrix);//libero la memoria assegnata alla temp_matrix, poich√® non pi√π necessaria
+	
+	//scambio delle righe di confine con i processi vicini
+	if(numtasks > 1)						
+		exchangeRow(&sub_matrix[0][0], row_succ, &sub_matrix[rows - 1][0], row_pred, rank, numtasks, recvRequest);
+
+	/*
+	*@brief VERIFICA DELLA UNHAPPINESS DEGLI ELEMENTI
+	*/
+
+	//dichiaro i puntatori utilizzati per i cambi di posizione delle celle
+	int* temp_irregular = (int*)malloc(sizeof(int));	
+	int* temp_empty = (int*)malloc(sizeof(int));
+
+	while (iteration <= S) {
+		//scorri la sub_matrix alla ricerca di elementi insoddisfatti e tieni traccia di questi con lo stack di puntatori
+		//tieni traccia con una coda circolare di puntatori anche delle caselle vuote della sub_matrix che verranno usate per eventuali spostamenti
+		
+		unhappy = 0;//ad ogni giro ricalcolo gli insoddisfatti della sub_matrix
+		
+		//controlla di avere i dati degli scambi delle righe di confine
 		if (numtasks > 1) {
 			if (rank == 0)  
 				MPI_Wait(&recvRequest[1], MPI_STATUS_IGNORE);
@@ -189,140 +167,156 @@ int main() {
 				MPI_Wait(&recvRequest[0], MPI_STATUS_IGNORE);
 		}
 
-	//LOGICA DI CONTROLLO DEI CONFLITTI
-		for(i = 0; i < righe; i++){
-			for(j = 0; j < COLONNE; j++){
+		/*
+		*@brief Ricerca degli elementi UNHAPPY
+		*/
+		for(i = 0; i < rows; i++){
+			for(j = 0; j < COLUMNS; j++){
+
 				//crea lo stack di spazi vuoti al primo giro (il valore viene poi gestito con gli scambi siccome gli spazi vuoti non cambiano di numero)
-				if (sottomatrice[i][j] == 0 && numGiro == 1) {	
-					pushQueue(empty, dimPuntatori, &sottomatrice[i][j], &head, &tail, &numVuoti);
-					//printf("spazio vuoto a [%d][%d] head(%d) tail(%d) rank{%d} vuoti[%d]\n", i, j, head, tail, rank,  numVuoti);
-				}else if(sottomatrice[i][j] != 0){
-					//tutti i processi tranne il rank 0 hanno una righa che gli Ë stata passata da qualcun'altro
+				if (sub_matrix[i][j] == 0 && iteration == 1) {	
+					pushQueue(empty, dim_pointers, &sub_matrix[i][j], &head, &tail, &num_empty);
+					
+				}else if(sub_matrix[i][j] != 0){
+					//tutti i processi tranne il rank 0 e l'ultimo processo hanno due  righe che gli sono state inviate dai processi adiacenti
+					//il processo root ha solo la riga inferiore (row_succ)
+					//l'ultimo processo ha solo la riga superiore (row_pred)
 					if(rank == 0 && i == 0){
+						//se sono il processo rank 0 e sono alla riga 0 non ho una riga superiore, quindi non posso controllare
+						//le celle in alto
 					}else{
+
 						int * top_row;
+						//se la riga √® 0 e rank!=0 allora dobbiamo controllare la riga che ci √® stata passata da un'altro processo
 						if(i == 0 && rank != 0){
-							top_row = rigaPred;
-						}else{
-							top_row = sottomatrice[i - 1];
+							top_row = row_pred;
+						}else{ //altrimenti prendiamo la riga dalla nostra sub matrix
+							top_row = sub_matrix[i - 1];
 						}
 						//posizione in alto
 						if(top_row[j] != 0){
-							numVicini++;
-							if(sottomatrice[i][j] != top_row[j]) conflitti++;
-							else uguali++;
+							num_near++;
+							if(sub_matrix[i][j] != top_row[j]) num_diff++;
+							else num_equals++;
 						}
 						//se non siamo nella prima colonna
 						if(j != 0){
 							//posizione in alto a sinistra
 							if(top_row[j - 1] != 0){
-								numVicini++;
-								if(sottomatrice[i][j] != top_row[j - 1]) conflitti++;
-								else uguali++;
+								num_near++;
+								if(sub_matrix[i][j] != top_row[j - 1]) num_diff++;
+								else num_equals++;
 							}
 						}
-
-						if(j != COLONNE-1){
+						//se non siamo nell'ultima colonna
+						if(j != COLUMNS-1){
 							//posizione in alto a destra
 							if(top_row[j + 1] != 0){
-								numVicini++;
-								if(sottomatrice[i][j] != top_row[j + 1]) conflitti++;
-								else uguali++;
+								num_near++;
+								if(sub_matrix[i][j] != top_row[j + 1]) num_diff++;
+								else num_equals++;
 							}
 						}
 					}
 						
-					if(rank == numtasks - 1 && i == righe - 1){
-
+					if(rank == numtasks - 1 && i == rows - 1){
+						//se siamo l'ultimo processo e ci troviamo nella nostra ultima riga non possiamo controllare le posizioni inferiori
 					}else{
+
 						int* bottom_row;
-						if(i == righe - 1 && rank != numtasks - 1){//se siamo nell'ultima riga della sottomatrice
-							bottom_row = rigaSucc; //prendo la riga che mi hanno passato da sotto
-						}else {
-							bottom_row = sottomatrice[i + 1];
+						if(i == rows - 1 && rank != numtasks - 1){//se siamo nell'ultima riga della sub_matrix e non siamo l'ultimo processo
+							bottom_row = row_succ; //prendo la riga che mi hanno passato da sotto
+						}else { //altrimenti prendo la riga dalla mia sottomatrice
+							bottom_row = sub_matrix[i + 1];
 						}
 						//posizione in basso
 						if(bottom_row[j] != 0){
-							numVicini++;
-							if(sottomatrice[i][j] != bottom_row[j + 1]) conflitti++;
-							else uguali++;
+							num_near++;
+							if(sub_matrix[i][j] != bottom_row[j + 1]) num_diff++;
+							else num_equals++;
 						}
-						//posizione in basso a sinistra
+						//se non ci troviamo nella prima colonna
 						if(j != 0){
+							//posizione in basso a sinistra
 							if(bottom_row[j - 1] != 0){
-								numVicini++;
-								if(sottomatrice[i][j] != bottom_row[j - 1]) conflitti++;
-								else uguali++;
+								num_near++;
+								if(sub_matrix[i][j] != bottom_row[j - 1]) num_diff++;
+								else num_equals++;
 							}
 						}
-						//posizione in basso a destra
-						if(j != COLONNE - 1){
+						//se non ci troviamo nell'ultima colonna
+						if(j != COLUMNS - 1){
+							//posizione in basso a destra
 							if(bottom_row[j + 1] != 0){
-								numVicini++;
-								if(sottomatrice[i][j] != bottom_row[j + 1]) conflitti++;
-								else uguali++;
+								num_near++;
+								if(sub_matrix[i][j] != bottom_row[j + 1]) num_diff++;
+								else num_equals++;
 							}
 						}
 					}
-						//posizione a sinistra
+					//posizione a sinistra
 					if(j != 0){
-						if(sottomatrice[i][j - 1] != 0){
-							numVicini++;
-							if(sottomatrice[i][j] != sottomatrice[i][j - 1]) conflitti++;
-							else uguali++;
+						if(sub_matrix[i][j - 1] != 0){
+							num_near++;
+							if(sub_matrix[i][j] != sub_matrix[i][j - 1]) num_diff++;
+							else num_equals++;
 						}
 					}
 					//posizione a destra
-					if(j != COLONNE-1){
-						if(sottomatrice[i][j + 1] != 0){
-							numVicini++;
-							if(sottomatrice[i][j] != sottomatrice[i][j + 1]) conflitti++;
-							else uguali++;
+					if(j != COLUMNS-1){
+						if(sub_matrix[i][j + 1] != 0){
+							num_near++;
+							if(sub_matrix[i][j] != sub_matrix[i][j + 1]) num_diff++;
+							else num_equals++;
 						}
 					}
 				}
 				// prima di passare alla cella successiva controlla i conflitti
-				if (conflitti > 0) { //si Ë verificato almeno un conflitto con questa cella
-					percentuale = uguali/(uguali+conflitti);
-					if (percentuale < sogliaConflitti) {
-						//printf("\n-+{r:%d}%d[i:%d][j:%d](giro:%d)", rank, *push(irregular, dimPuntatori, &sottomatrice[i][j], &k), i, j, numGiro);
-						push(irregular, dimPuntatori, &sottomatrice[i][j], &k);
-						numInsoddisfatti++;
+				if (num_diff > 0) { //si √© verificato almeno un conflitto con questa cella?
+					amt_same = num_equals/(num_equals+num_diff); //calcolo fattore di unhappyness
+					if (amt_same < threshold) {//se il valore √® inferiore al threshold l'elemento non √® felice
+						push(irregular, dim_pointers, &sub_matrix[i][j], &k);
+						unhappy++;
 					}
-					conflitti = 0;
-					uguali = 0;
+					num_diff = 0;
+					num_equals = 0;
 				}
-				numVicini = 0;
+				num_near = 0;
 			}
 		}
-//		printf("Sono uscito dal ciclo conflitti rank = %d\n ", rank);
-	
-		//dopo aver setacciato tutta la sottomatrice: se non ci sono spazi vuoti, se ci sono solo spazi o se non ci sono irregolarit‡, indica la volont‡ di terminare
-		if (numInsoddisfatti == 0 || numVuoti == dimPuntatori - 1|| numVuoti == 0 ) {
+
+
+		/*
+		*@brief Condizione di terminazione dei processi
+		*/
+		//dopo aver setacciato tutta la sub_matrix: se non ci sono spazi vuoti, se ci sono solo spazi o se non ci sono elementi insoddisfatti, indica la volont√† di terminare
+		if (unhappy == 0 || num_empty == dim_pointers - 1|| num_empty == 0 ) {
 			if (numtasks == 1)
 				break;
 			else
-				termina = 1;
+				end = 1;
 		}
 		else 
-			termina = 0;
+			end = 0;
 		//se tutti i processi vogliono terminare allora termina uscendo dal ciclo
-//		printf("all reduce rank %d\n", rank);
-		MPI_Allreduce(&termina, &conferma, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-//		printf("fine all reduce rank %d\n", rank);
-		if (conferma == numtasks)
+
+		MPI_Allreduce(&end, &check, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+
+		if (check == numtasks)
 			break;
 
-	//LOGICA SOSTITUZIONI
-		if (numVuoti > 0) {		//se nella sottomatrice sono presenti spazi vuoti
-			while (k > 0) {		//finchË lo stack degli insoddisfatti non si svuota
-			//cambia il valore indicizzato dal puntatore restituito da pop(empty) ciÚ che viene restituito da pop(irregular)
-				irregolare = pop(irregular, &k);
-				vuoto = popQueue(empty, dimPuntatori, &head, &tail, &numVuoti);
-				if (irregolare != NULL && vuoto != NULL) {
-					*vuoto = *irregolare;						//riempi la casella vuota
-					*irregolare = 0;							//libera la casella irregolare e falla puntare come nuova casella libera
-					pushQueue(empty, dimPuntatori, irregolare, &head, &tail, &numVuoti);
+		/*
+		*@brief logica di sostituzione
+		*/
+		if (num_empty > 0) {//se nella sub_matrix sono presenti spazi vuoti
+			while (k > 0) {	//finch√® lo stack degli insoddisfatti non si svuota
+				//cambia il valore indicizzato dal puntatore restituito da pop(empty) ci√ß che viene restituito da pop(irregular)
+				temp_irregular = pop(irregular, &k);
+				temp_empty = popQueue(empty, dim_pointers, &head, &tail, &num_empty);
+				if (temp_irregular != NULL && temp_empty != NULL) {
+					*temp_empty = *temp_irregular;					//riempi la casella vuota
+					*temp_irregular = 0;							//libera la casella temp_irregular e falla puntare come nuova casella libera
+					pushQueue(empty, dim_pointers, temp_irregular, &head, &tail, &num_empty);
 				}
 				else
 					printf("puntatori nulli\n");
@@ -330,149 +324,191 @@ int main() {
 		}
 		else // se non ci sono spazi vuoti non si possono fare scambi
 			k = 0;	//per non far riempire lo stack degli insoddisfatti azzera il puntatore a head
-		
-		/*	test di stampa della sottomatrice al giro i-esimo
-			printf("\nrank %d stampo la sottomatrice risultante al giro %d:\n", rank, numGiro);
-			for (int i = 0; i < righe; i++) {
-				for (int j = 0; j < dimensione; j++)
-					printf("{%d}[%d] ", rank, sottomatrice[i][j]);
-				printf("\n");
-			}
-			printf("\n");
-		
-		*/
-		if(numtasks > 1)
-			exchangeRow(&sottomatrice[0][0], rigaSucc, &sottomatrice[righe - 1][0], rigaPred, rank, numtasks, recvRequest);
-//		printf("Barrier\n");	
-		MPI_Barrier(MPI_COMM_WORLD);
-//		printf("Fine Barrier\n");
-		numGiro++;	
 
+		//reinviamo le righe adiacenti aggiornate
+		if(numtasks > 1)
+			exchangeRow(&sub_matrix[0][0], row_succ, &sub_matrix[rows - 1][0], row_pred, rank, numtasks, recvRequest);
+	
+		MPI_Barrier(MPI_COMM_WORLD);
+
+		iteration++;	
 	}
 
+	/*
+	*@brief verifica ottenimento soluzione ottima
+	*/
 	int soluzioneLoc = 0, soluzioneGlob = 0;
 	
-	if (numInsoddisfatti == 0) {
-		//printf("\nprocesso %d, termino dopo aver risolto il problema\n", rank);
+	//ogni processo se non ha elementi unhappy setta la soluzioneLoc a 1
+	if (unhappy == 0) {
 		soluzioneLoc = 1;
 	}
-
+	//sommiamo tutti i valori di soluzioneLoc in soluzioneGlob
 	MPI_Reduce(&soluzioneLoc, &soluzioneGlob, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
-	
+	//Se il valore di soluzioneGlob == numtasks allora tutti i processi hanno ottenuto una soluzione ottima localmente e quindi abbiamo trovato la 
+	//soluzione ottima globalmente
 	if (rank == 0) {
-		if (numGiro > S)
+		if (iteration > S)
 			printf("Limite di giri raggiunto. ");
-
 		if (soluzioneGlob == numtasks)
 			printf("La soluzione fornita dai processi e' ottima globalmente\n");
 		else
 			printf("La soluzione fornita dai processi non e' ottima globalmente\n");
-
-		//printf("numero giri compiuti %d\n", numGiro-1);
 	}
 	
 	MPI_Barrier(MPI_COMM_WORLD);
-	end = clock();
+	//inserire papi
+	end_time = clock();
 	if (rank == 0) {
 		//concludo la misurazione del tempo e stampo il risultato
-		double time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+		double time_spent = (double)(end_time - begin) / CLOCKS_PER_SEC;
 		time_spent = time_spent * 1000;			//conversione in secondi
 		printf("Il tempo impiegato dal programma (in millisecondi) e': %f\n\n", time_spent);
 	}
 
+	free(sub_matrix);
+	free(row_pred);
+	free(row_succ);
+	free(empty);
+	free(irregular);
+	free(temp_irregular);
+	free(temp_empty);
+
 	MPI_Finalize();
+
 	return 0;
 }
 
-
+/*
+*@brief invio righe estremi della sotto matrice ai processi adiacenti
+*@param sendFirst prima riga della sottomatrice da inviare al predecessore
+*@param recvFirst prima riga della sottomatrice del successore
+*@param sendLast ultima riga della sottomatrice da inviare al successore
+*@param recvLast ultima riga della sottomatrice del predecessore
+*@param rank del processo
+*@param numtasks numero di processi
+*@param recvRequest
+*/
 void exchangeRow(int* sendFirst, int* recvFirst, int* sendLast, int* recvLast, int rank, int numtasks, MPI_Request* recvRequest){
-	int destinatario, sorgente, tagFirst = 2, tagLast=3;
+	int destination, source, tagFirst = 2, tagLast=3;
 	MPI_Request sendrequest;
 
 	//tutti i processi (tranne lo 0) inviano al predecessore la loro prima riga e ricevono da questo la sua ultima riga
 	if (rank != 0) {
-		destinatario = rank - 1;		//invia la prima riga al predecessore
-		MPI_Isend(sendFirst, COLONNE, MPI_INT, destinatario, tagFirst, MPI_COMM_WORLD, &sendrequest);
+		destination = rank - 1;		//invia la prima riga al predecessore
+		MPI_Isend(sendFirst, COLUMNS, MPI_INT, destination, tagFirst, MPI_COMM_WORLD, &sendrequest);
 
-		sorgente = rank - 1;			//ricevi l'ultima riga del predecessore
-		MPI_Irecv(recvLast, COLONNE, MPI_INT, sorgente, tagLast, MPI_COMM_WORLD, &recvRequest[0]);
+		source = rank - 1;			//ricevi l'ultima riga del predecessore
+		MPI_Irecv(recvLast, COLUMNS, MPI_INT, source, tagLast, MPI_COMM_WORLD, &recvRequest[0]);
 	}
 
 	//tutti i processi tranne l'ultimo inviano la propria ultima riga al successore e ricevono da quest'ultimo la sua prima riga
 	if (rank != numtasks - 1) {
-		destinatario = rank + 1;		//invia la sua ultima riga al successore
-		MPI_Isend(sendLast, COLONNE, MPI_INT, destinatario, tagLast, MPI_COMM_WORLD, &sendrequest);
+		destination = rank + 1;		//invia la sua ultima riga al successore
+		MPI_Isend(sendLast, COLUMNS, MPI_INT, destination, tagLast, MPI_COMM_WORLD, &sendrequest);
 
-		sorgente = rank + 1;			//ricevi la prima riga del successore
-		MPI_Irecv(recvFirst, COLONNE, MPI_INT, sorgente, tagFirst, MPI_COMM_WORLD, &recvRequest[1]);
+		source = rank + 1;			//ricevi la prima riga del successore
+		MPI_Irecv(recvFirst, COLUMNS, MPI_INT, source, tagFirst, MPI_COMM_WORLD, &recvRequest[1]);
 	}
 }
 
-//push aggiunge un elemento allo stack e lo restituisce se completa l'operazione
-//top Ë l'indice della prima cella libera dello stack
-int* push(int* stack[], int dimensione, int* elemento, int* top){
+/*
+*@brief push aggiunge un elemento allo stack e lo restituisce se completa l'operazione
+*@param stack, la pila
+*@param dimension dimensione dello stack
+*@param element da aggiugere allo stack
+*@param top √© l'indice della prima cella libera dello stack
+*
+*@return puntatore all'elemento inserito
+*/
+int* push(int* stack[], int dimension, int* element, int* top){
 	
-	if (*top < dimensione) {
-		stack[*top] = elemento;
+	if (*top < dimension) {
+		stack[*top] = element;
 		*top= *top+1;
-		return stack[*top - 1];		//restituisci il puntatore all'elemento che ho appena aggiunto
+		return stack[*top - 1];	//restituisci il puntatore all'elemento che ho appena aggiunto
 	}
 	else
 		printf("Stack pieno!\n");
 	return NULL;
 }
 
-//pop elimina un elemento dallo stack e lo restituisce se va a buon fine
+/*
+*@brief pop elimina un element dallo stack e lo restituisce se va a buon fine
+*@param stack, la pila
+*@param top  √© l'indice della prima cella libera dello stack
+*
+*@return l'elemento estratto dallo stack
+*/
 int* pop(int* stack[], int* top){
 	if (*top > 0) {
 		*top = *top-1;
-		return stack[*top];			//puntatore all'elemento che ho appena rimosso (top punta alla prima cella libera)
+		return stack[*top];			//puntatore all'element che ho appena rimosso (top punta alla prima cella libera)
 	}
 	else
-		printf("Lo stack e' vuoto\n");
+		printf("Lo stack e' temp_empty\n");
 	return NULL;
 }
 
-//pushQueue aggiunge l'elemento alla coda e restituisce un puntatore a questo se va a buon fine
-int* pushQueue(int* queue[], int dimensione, int* elemento, int* head, int* tail, int* numElements){
-	//head punta al primo elemento in coda, tail all'ultimo elemento inserito
-	if(*numElements==dimensione-1){
+/*
+*@brief pushQueue aggiunge l'elemento alla coda e restituisce un puntatore a questo se va a buon fine
+*@param queue, la coda
+*@param dimension dmensione della queue
+*@param element elemento da inserire nella queue
+*@param head puntatore alla testa della queue
+*@param tail puntatore alla coda della queue
+*@param numElements numero di elementi all'interno della queue
+*
+*@return il puntatore all'elemento inserito
+*/
+int* pushQueue(int* queue[], int dimension, int* element, int* head, int* tail, int* numElements){
+	//head punta al primo element in coda, tail all'ultimo element inserito
+	if(*numElements==dimension-1){
 		printf("la coda e' piena!\n");
 		return NULL;
 	}
 	else{
-		if (*numElements == 0) {	//se la coda Ë vuota: head e tail combaciano e non li sposto
-			queue[*tail] = elemento;
+		if (*numElements == 0) {	//se la coda √© vuota: head e tail combaciano e non li sposto
+			queue[*tail] = element;
 			*numElements = *numElements + 1;
 			return queue[*tail]; 
 			
 		}
 		else{
-			*tail = (*tail + 1) % dimensione;
-			queue[*tail] = elemento;
+			*tail = (*tail + 1) % dimension;
+			queue[*tail] = element;
 			*numElements = *numElements + 1;
 			
 			if (*tail == 0)
-				return queue[dimensione - 1];
+				return queue[dimension - 1];
 			else
 				return queue[*tail - 1];
 		}
 	}		
 }
 
-//popQueue preleva un elemento dalla testa della queue e lo restituisce
-int* popQueue(int* queue[],int dimensione, int* head, int* tail, int* numElements){
-	//head punta al primo elemento in coda, tail punta all'ultimo elemento aggiunto
+/*
+*@brief popQueue preleva un element dalla testa della queue e lo restituisce
+*@param queue, la coda
+*@param dimension dmensione della queue
+*@param head puntatore alla testa della queue
+*@param tail puntatore alla coda della queue
+*@param numElements numero di elementi all'interno della queue
+*
+*@return l'elemento estratto dalla coda
+*/
+int* popQueue(int* queue[],int dimension, int* head, int* tail, int* numElements){
+	//head punta al primo element in coda, tail punta all'ultimo element aggiunto
 	if (*numElements != 0) {
 		if (*numElements != 1) {
-			*head = (*head + 1) % dimensione;
+			*head = (*head + 1) % dimension;
 			*numElements = *numElements - 1;
 			if (*head == 0)
-				return queue[dimensione - 1];
+				return queue[dimension - 1];
 			else
 				return queue[*head - 1];
 		}
-		else {		//se la coda ha un solo elemento non sposto il puntatore siccome il primo elemento da prelevare e l'ultimo inserito coincidono
+		else {		//se la coda ha un solo element non sposto il puntatore siccome il primo element da prelevare e l'ultimo inserito coincidono
 			*numElements = *numElements - 1;
 			return queue[*head];
 		}
@@ -482,4 +518,44 @@ int* popQueue(int* queue[],int dimensione, int* head, int* tail, int* numElement
 		return NULL;
 	}
 	
+}
+/*
+*@brief readFile legge il file contenente la matrice di partenza e alloca la matrice
+*@param filename, nome del file
+*@param temp_matrix, la board di partenza
+*
+*@return 1 se il caricamento ha avuto buon fine, altrimenti -1
+*/
+int readFile(char* filename){
+	int i, j;
+	FILE *file;
+	printf("carico file\n");
+
+	temp_matrix = (int **)malloc(ROWS*sizeof(int*));
+	temp_matrix[0] = (int *)malloc(ROWS*COLUMNS*sizeof(int));
+
+	for(i = 1; i < ROWS; i++){
+		temp_matrix[i] = temp_matrix[0] + i * COLUMNS;
+	}
+
+	file = fopen("board.txt", "r");
+	if(file == NULL){
+		printf("File non trovato");
+		return -1;
+	}
+	char c;
+	int temp;
+	
+	for(i = 0; i < ROWS; i++){
+		for(j = 0; j < COLUMNS; j++){
+			fscanf(file, "%c", &c);
+			if(c == EMPTY) temp = 0;
+			if(c == WHITE) temp = 1;
+			else temp = 2;
+			temp_matrix[i][j] = temp;
+		}
+		fscanf(file, "%c", &c);
+	}
+	fclose(file);
+	return 1;
 }

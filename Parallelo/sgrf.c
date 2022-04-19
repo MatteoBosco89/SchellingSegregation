@@ -4,10 +4,10 @@
 #include <time.h>
 #include <string.h>
 
-#define SOGLIA 0.7			//soglia di soddisfazione degli agenti
-#define S 100				//numero massimo di giri
-#define RIGHE 10000			//numero di totale di righe della matrice per la strong, numero di righe per ogni processo per la weak
-#define COLONNE 10000		//numero di colonne della matrice
+#define THRESHOLD 0.7			//soglia di soddisfazione degli agenti
+#define ITER 200			//numero massimo di giri
+#define ROW 10000			//numero di totale di righe della matrice per la strong, numero di righe per ogni processo per la weak
+#define COL 10000		//numero di colonne della matrice
 #define OP "strong"			//inserire "strong" per strong scalability e "weak" per weak scalability
 
 void exchangeRow(int* sendFirst, int* recvFirst, int* sendLast, int* recvLast, int rank, int numtasks, MPI_Request* recvRequest);
@@ -21,12 +21,12 @@ int* popQueue(int* queue[], int dimensione, int* head, int* tail, int* numElemen
 
 int main() {
 	int	numtasks, rank
-		, righe, resto, divisione													//variabili per la conformazione della matrice e sottomatrice quando si esegue il programma in modalità diverse
+		, righe, resto, divisione													//variabili per la conformazione della matrice e sottomatrice quando si esegue il programma in modalitï¿½ diverse
 		, righetot																	//le righe complessive della matrice, cambiano in base a weak o strong
 		, tag = 1, sorgente = 0, destinatario										//variabili per le comunicazioni sulla suddivisione della matrice iniziale
 		, numGiro = 1																//numGiro= numero di giro attuale
 		, numVuoti = 0, numInsoddisfatti = 0										//numVuoti: contatore celle vuote e head dello stack "empty", numInsoddisfatti= contatore celle insoddisfatte di tutta la sottomatrice 
-		, numVicini=0, uguali = 0, conflitti = 0, percentuale, sogliaConflitti = SOGLIA	//per il calcolo della percentuale di ogni cella, conflitti tiene traccia dei conflitti generati in ogni cella (a differenza di numInsoddisfatti che tiene traccia del totale)
+		, numVicini=0, uguali = 0, conflitti = 0, percentuale, sogliaConflitti = THRESHOLD	//per il calcolo della percentuale di ogni cella, conflitti tiene traccia dei conflitti generati in ogni cella (a differenza di numInsoddisfatti che tiene traccia del totale)
 		, k = 0																		//k= head dello stack "irregular" per le celle insoddisfatte
 		, head=0, tail=0															//contengono gli indici per gestire la coda degli elementi vuoti
 		, termina=0, conferma=0;													//valori utili per la terminazione dei processi
@@ -36,19 +36,19 @@ int main() {
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 	
 	if (strcmp(OP, "strong") == 0) {
-		divisione = RIGHE / numtasks;	//numero di righe per ogni processo
-		resto = RIGHE % numtasks;		//conta le righe "superflue" da dividere ogni per processo
-		righetot = RIGHE;				//nella strong le righe indicate sono quelle totali
+		divisione = ROW / numtasks;	//numero di righe per ogni processo
+		resto = ROW % numtasks;		//conta le righe "superflue" da dividere ogni per processo
+		righetot = ROW;				//nella strong le righe indicate sono quelle totali
 		if (rank < resto)
-			righe = divisione + 1;		//I primi "resto" processi avranno una riga in più
+			righe = divisione + 1;		//I primi "resto" processi avranno una riga in piï¿½
 		else
 			righe = divisione;
 	}
 	else if (strcmp(OP, "weak") == 0) {
 		resto = 0;
-		divisione = RIGHE;
-		righetot = RIGHE * numtasks;	//nella weak le righe totali variano in base ai processi
-		righe = RIGHE;
+		divisione = ROW;
+		righetot = ROW * numtasks;	//nella weak le righe totali variano in base ai processi
+		righe = ROW;
 	}
 	else {
 		printf("operazione errata, termino\n");
@@ -58,17 +58,17 @@ int main() {
 	
 	//alloco la sottomatrice per ogni processo
 	int** sottomatrice = (int**) malloc(righe*sizeof(int*));
-	sottomatrice[0] = (int*)malloc(righe * COLONNE * sizeof(int));
+	sottomatrice[0] = (int*)malloc(righe * COL * sizeof(int));
 	int i, j;
 	for (i = 1; i < righe; i++)
-		sottomatrice[i] = sottomatrice[0] + i * COLONNE;
+		sottomatrice[i] = sottomatrice[0] + i * COL;
 	
 	//alloco la riga dei dati provenienti predecessore e dal successore
-	int* rigaPred = malloc(COLONNE * sizeof(int));
-	int* rigaSucc = malloc(COLONNE * sizeof(int));
+	int* rigaPred = malloc(COL * sizeof(int));
+	int* rigaSucc = malloc(COL * sizeof(int));
 
 	//stack e coda di puntatori per le celle vuote o insoddisfatte
-	int dimPuntatori = (righe * COLONNE);					//la dimensione dell'array puntatori è pari alla dimensione della sottomatrice (caso peggiore = sottomatrice di solo spazi o con tutti irregolari e senza spazi)
+	int dimPuntatori = (righe * COL);					//la dimensione dell'array puntatori ï¿½ pari alla dimensione della sottomatrice (caso peggiore = sottomatrice di solo spazi o con tutti irregolari e senza spazi)
 	int** empty = malloc(dimPuntatori * sizeof(int*));		//coda con puntatori alle celle vuote della sottomatrice
 	int** irregular = malloc(dimPuntatori * sizeof(int*));	//stack con puntatori alle celle irregolari della sottomatrice
 	
@@ -82,7 +82,7 @@ int main() {
 
 //LOGICA DI GENERAZIONE E DISTRIBUZIONE DELLA MATRICE
 	if (rank == 0) {
-		int buffer[COLONNE];
+		int buffer[COL];
 		int	i, j, numMessaggi = 0; 
 		//per numeri pseudocasuali differenti ad ogni esecuzione
 		//time_t t;
@@ -98,7 +98,7 @@ int main() {
 		//utilizzo due for innestati: il primo riguarda la generazione dei dati che andranno processo 0 (senza send)
 		//e l'altro con quelli che andranno anche inviati (con send al processo adatto, per ogni riga generata)
 		for (i = 0; i < righe; i++) {
-			for (j = 0; j < COLONNE; j++) {
+			for (j = 0; j < COL; j++) {
 				buffer[j]= rand() % 3;
 				sottomatrice[i][j] = buffer[j];
 				//printf("[%d]", buffer[j]);
@@ -106,12 +106,12 @@ int main() {
 			//printf("\n");
 		}
 		for (i = 0; i < righetot;i++) {
-			for (j = 0; j < COLONNE; j++) {
+			for (j = 0; j < COL; j++) {
 				buffer[j] = rand() % 3;
 				//printf("[%d]", buffer[j]);
 			}
 			//printf("\n");
-			//invia una riga in più al destinatario a cui spetta
+			//invia una riga in piï¿½ al destinatario a cui spetta
 			if (destinatario < resto) { 
 				if (numMessaggi == divisione+1) {
 					numMessaggi = 0;
@@ -127,7 +127,7 @@ int main() {
 			//ho provato ad effettuare il pack e l'unpack dei dati per ridurre il numero di send ma non comportavano un risparmio di operazioni...
 			//siccome invece che una send e receive per ogni riga si faceva il pack e l'unpack di ogni riga + send e receive per ogni blocco di righe.
 		
-			MPI_Isend(&buffer, COLONNE, MPI_INT, destinatario, tag, MPI_COMM_WORLD, &request[destinatario]);
+			MPI_Isend(&buffer, COL, MPI_INT, destinatario, tag, MPI_COMM_WORLD, &request[destinatario]);
 			numMessaggi++;
 		}
 		printf("Generazione conclusa, procedo con la seconda fase del processo\n\n");
@@ -135,7 +135,7 @@ int main() {
 	else {									//I processi non root ricevono le righe che gli spettano e le salvano nella sottomatrice
 		MPI_Status stat;
 		for (i = 0; i < righe; i++) {
-			MPI_Recv(&sottomatrice[i][0], COLONNE, MPI_INT, sorgente, tag, MPI_COMM_WORLD, &stat);
+			MPI_Recv(&sottomatrice[i][0], COL, MPI_INT, sorgente, tag, MPI_COMM_WORLD, &stat);
 			//for (int j = 0; j < COLONNE; j++)
 				//printf("{%d}[%d], ", rank, sottomatrice[i][j]);
 		}
@@ -149,7 +149,7 @@ int main() {
 	int* irregolare = (int*)malloc(sizeof(int));	
 	int* vuoto = (int*)malloc(sizeof(int));
 
-	while (numGiro <= S) {
+	while (numGiro <= ITER) {
 		//scorri la sottomatrice alla ricerca di agenti insoddisfatti e tieni traccia di questi con lo stack di puntatori
 		//tieni traccia con una coda circolare di puntatori anche delle caselle vuote della sottomatrice che verranno usate per eventuali spostamenti
 		numInsoddisfatti = 0;		//ad ogni giro ricalcolo gli insoddisfatti della sottomatrice
@@ -169,13 +169,13 @@ int main() {
 
 	//LOGICA DI CONTROLLO DEI CONFLITTI
 		for(i = 0; i < righe; i++){
-			for(j = 0; j < COLONNE; j++){
+			for(j = 0; j < COL; j++){
 				//crea lo stack di spazi vuoti al primo giro (il valore viene poi gestito con gli scambi siccome gli spazi vuoti non cambiano di numero)
 				if (sottomatrice[i][j] == 0 && numGiro == 1) {	
 					pushQueue(empty, dimPuntatori, &sottomatrice[i][j], &head, &tail, &numVuoti);
 					//printf("spazio vuoto a [%d][%d] head(%d) tail(%d) rank{%d} vuoti[%d]\n", i, j, head, tail, rank,  numVuoti);
 				}else if(sottomatrice[i][j] != 0){
-					//tutti i processi tranne il rank 0 hanno una righa che gli è stata passata da qualcun'altro
+					//tutti i processi tranne il rank 0 hanno una righa che gli ï¿½ stata passata da qualcun'altro
 					if(rank == 0 && i == 0){
 					}else{
 						int * top_row;
@@ -200,7 +200,7 @@ int main() {
 							}
 						}
 
-						if(j != COLONNE-1){
+						if(j != COL - 1){
 							//posizione in alto a destra
 							if(top_row[j + 1] != 0){
 								numVicini++;
@@ -234,7 +234,7 @@ int main() {
 							}
 						}
 						//posizione in basso a destra
-						if(j != COLONNE - 1){
+						if(j != COL - 1){
 							if(bottom_row[j + 1] != 0){
 								numVicini++;
 								if(sottomatrice[i][j] != bottom_row[j + 1]) conflitti++;
@@ -251,7 +251,7 @@ int main() {
 						}
 					}
 					//posizione a destra
-					if(j != COLONNE-1){
+					if(j != COL - 1){
 						if(sottomatrice[i][j + 1] != 0){
 							numVicini++;
 							if(sottomatrice[i][j] != sottomatrice[i][j + 1]) conflitti++;
@@ -260,7 +260,7 @@ int main() {
 					}
 				}
 				// prima di passare alla cella successiva controlla i conflitti
-				if (conflitti > 0) { //si è verificato almeno un conflitto con questa cella
+				if (conflitti > 0) { //si ï¿½ verificato almeno un conflitto con questa cella
 					percentuale = uguali/(uguali+conflitti);
 					if (percentuale < sogliaConflitti) {
 						//printf("\n-+{r:%d}%d[i:%d][j:%d](giro:%d)", rank, *push(irregular, dimPuntatori, &sottomatrice[i][j], &k), i, j, numGiro);
@@ -275,7 +275,7 @@ int main() {
 		}
 //		printf("Sono uscito dal ciclo conflitti rank = %d\n ", rank);
 	
-		//dopo aver setacciato tutta la sottomatrice: se non ci sono spazi vuoti, se ci sono solo spazi o se non ci sono irregolarità, indica la volontà di terminare
+		//dopo aver setacciato tutta la sottomatrice: se non ci sono spazi vuoti, se ci sono solo spazi o se non ci sono irregolaritï¿½, indica la volontï¿½ di terminare
 		if (numInsoddisfatti == 0 || numVuoti == dimPuntatori - 1|| numVuoti == 0 ) {
 			if (numtasks == 1)
 				break;
@@ -293,8 +293,8 @@ int main() {
 
 	//LOGICA SOSTITUZIONI
 		if (numVuoti > 0) {		//se nella sottomatrice sono presenti spazi vuoti
-			while (k > 0) {		//finchè lo stack degli insoddisfatti non si svuota
-			//cambia il valore indicizzato dal puntatore restituito da pop(empty) ciò che viene restituito da pop(irregular)
+			while (k > 0) {		//finchï¿½ lo stack degli insoddisfatti non si svuota
+			//cambia il valore indicizzato dal puntatore restituito da pop(empty) ciï¿½ che viene restituito da pop(irregular)
 				irregolare = pop(irregular, &k);
 				vuoto = popQueue(empty, dimPuntatori, &head, &tail, &numVuoti);
 				if (irregolare != NULL && vuoto != NULL) {
@@ -387,7 +387,7 @@ void exchangeRow(int* sendFirst, int* recvFirst, int* sendLast, int* recvLast, i
 }
 
 //push aggiunge un elemento allo stack e lo restituisce se completa l'operazione
-//top è l'indice della prima cella libera dello stack
+//top  l'indice della prima cella libera dello stack
 int* push(int* stack[], int dimensione, int* elemento, int* top){
 	
 	if (*top < dimensione) {
@@ -419,7 +419,7 @@ int* pushQueue(int* queue[], int dimensione, int* elemento, int* head, int* tail
 		return NULL;
 	}
 	else{
-		if (*numElements == 0) {	//se la coda è vuota: head e tail combaciano e non li sposto
+		if (*numElements == 0) {	//se la coda ï¿½ vuota: head e tail combaciano e non li sposto
 			queue[*tail] = elemento;
 			*numElements = *numElements + 1;
 			return queue[*tail]; 

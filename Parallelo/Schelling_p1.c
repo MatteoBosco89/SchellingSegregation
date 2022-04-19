@@ -185,9 +185,9 @@ int main() {
 		}
 		//printf("sottomatrici inviate\n\n");
 	}else{	//I processi non MASTER ricevono le righe che gli spettano e le salvano nella sub_matrix
-		MPI_Status stat;
+		MPI_Request req[numtasks];
 		for (i = 0; i < rows; i++) {
-			MPI_Recv(&sub_matrix[i][0], COLUMNS, MPI_INT, source, tag, MPI_COMM_WORLD, &stat);
+			MPI_Recv(&sub_matrix[i][0], COLUMNS, MPI_INT, source, tag, MPI_COMM_WORLD, &req[rank]);
 		}
 	}
 

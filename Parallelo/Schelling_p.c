@@ -2,8 +2,6 @@
  * @file Schelling_p.c
  * @author Team: Bosco, Cavoto, Ungolo
  * @brief Versione parallela modello Schelling's Segregation
- * @version 0.1
- * @date 2022-04-19
  * 
  * 
  */
@@ -14,14 +12,14 @@
 #include <time.h>
 #include <string.h>
 
-#define THRESHOLD 0.7			//soglia di soddisfazione agenti
-#define ITER 100				//numero massimo di iterazioni
+#define THRESHOLD 0.5			//soglia di soddisfazione agenti (tolleranza)
+#define ITER 200				//numero massimo di iterazioni
 #define ROWS 10000				//numero di totale di righe della matrice
 #define COLUMNS 10000			//numero di colonne della matrice
-#define WHITE '1'
-#define BLACK '2'
-#define EMPTY '0'
-#define MASTER 0
+#define WHITE '1'               //carattere che rappresenta la prima parte della popolazione
+#define BLACK '2'               //carattere che rappresenta la seconda parte della popolazione
+#define EMPTY '0'               //carattere che rappresenta gli spazi vuoti nella board
+#define MASTER 0                // rank del MASTER
 
 
 /**
@@ -80,10 +78,12 @@ int main() {
 	 */
 
 	int	numtasks, rank, rows, change, division, rowstot, tag = 1, source = 0, destination;
-	int iteration = 1, num_empty = 0, unhappy = 0, num_near=0, count_same = 0, count_diff = 0, amt_same, threshold = THRESHOLD;
+	int iteration = 1, num_empty = 0, unhappy = 0, num_near=0, threshold = THRESHOLD;
 	int k = 0, head=0, tail=0, end=0, check=0;
 	long_long papi_time_start, papi_time_stop;
     double wallClock_start, wallClock_stop;
+    double amt_same;
+    float count_same = 0.0, count_diff = 0.0;
 	
 	/**
 	 * @brief Inizializzazione MPI
@@ -212,7 +212,7 @@ int main() {
 	wallClock_start = MPI_Wtime();
     papi_time_start = PAPI_get_real_usec();
 
-	while (iteration <= ITER) {
+	while (iteration < ITER) {
 		//recupero agenti unhappy e inserimento nello stack
 		//la coda mantiene le posizioni vuote per eventuali spostamenti
 		//gli unhappy sono ricalcolati ad ogni iterazione
@@ -237,7 +237,7 @@ int main() {
 			for(j = 0; j < COLUMNS; j++){
 
 				//crea lo stack di spazi vuoti al primo giro (il valore viene poi gestito con gli scambi siccome gli spazi vuoti non cambiano di numero)
-				if (sub_matrix[i][j] == 0 && iteration == 1) {	
+				if (sub_matrix[i][j] == 0 && iteration == 0) {	
 					pushQueue(empty, dim_pointers, &sub_matrix[i][j], &head, &tail, &num_empty);
 					
 				}else if(sub_matrix[i][j] != 0){
@@ -335,9 +335,9 @@ int main() {
 					}
 				}
 				// controllo happyness
-				if (count_diff > 0) { // almeno un elmento diverso, altrimenti agente happy
+				if (num_near > 0) { // almeno un elmento adiacente, altrimenti agente sicuramente happy
 					amt_same = count_same/(count_same + count_diff); // calcolo fattore di unhappyness
-					if (amt_same < threshold) { // se il valore è inferiore al threshold l'elemento non è felice
+					if (amt_same < threshold) { // se il valore inferiore al threshold elemento non felice
 						push(unhappy_spots, dim_pointers, &sub_matrix[i][j], &k);
 						unhappy++;
 					}
@@ -416,12 +416,11 @@ int main() {
     papi_time_stop = PAPI_get_real_usec();
 	if (rank == MASTER) {
 		if (soluzioneGlob == numtasks)
-			int ite = ITER - iteration;
-			printf("La soluzione trovata e\' ottima, iterazioni restanti = %d \n", ite);
+			printf("La soluzione trovata e\' ottima\n");
 		else
 			printf("La soluzione trovata non e\' ottima\n\n");
-		printf ("Tempo di esecuzione (secondi): %f\n",wallClock_stop - wallClock_start);
-    	printf ("Tempo di esecuzione PAPI (microsecondi): %d\n",papi_time_stop - papi_time_start);
+		printf ("Tempo di esecuzione (secondi): %f\n", wallClock_stop - wallClock_start);
+    	printf ("Tempo di esecuzione PAPI (microsecondi): %d\n", papi_time_stop - papi_time_start);
 	}
 
 	free(sub_matrix);
@@ -472,10 +471,10 @@ void exchangeRow(int* sendFirst, int* recvFirst, int* sendLast, int* recvLast, i
 
 /**
 * @brief push aggiunge un elemento allo stack e lo restituisce se completa l'operazione
-* @param stack, la pila
+* @param stack
 * @param dimension dimensione dello stack
 * @param element da aggiugere allo stack
-* @param top é l'indice della prima cella libera dello stack
+* @param top indice della prima cella libera dello stack
 *
 * @return puntatore all'elemento inserito
 */
@@ -492,9 +491,9 @@ int* push(int* stack[], int dimension, int* element, int* top){
 }
 
 /**
-* @brief pop elimina un element dallo stack e lo restituisce se va a buon fine
-* @param stack, la pila
-* @param top  é l'indice della prima cella libera dello stack
+* @brief pop elimina un elemento dallo stack e lo restituisce se va a buon fine
+* @param stack
+* @param top indice della prima cella libera dello stack
 *
 * @return l'elemento estratto dallo stack
 */
@@ -510,7 +509,7 @@ int* pop(int* stack[], int* top){
 
 /**
 * @brief pushQueue aggiunge l'elemento alla coda e restituisce un puntatore a questo se va a buon fine
-* @param queue, la coda
+* @param queue
 * @param dimension dmensione della queue
 * @param element elemento da inserire nella queue
 * @param head puntatore alla testa della queue
@@ -520,7 +519,7 @@ int* pop(int* stack[], int* top){
 * @return il puntatore all'elemento inserito
 */
 int* pushQueue(int* queue[], int dimension, int* element, int* head, int* tail, int* numElements){
-	//head punta al primo element in coda, tail all'ultimo element inserito
+	//head punta al primo element in coda, tail all'ultimo elemento inserito
 	if(*numElements==dimension-1){
 		printf("la coda e' piena!\n");
 		return NULL;
@@ -547,13 +546,13 @@ int* pushQueue(int* queue[], int dimension, int* element, int* head, int* tail, 
 
 /**
 * @brief popQueue preleva un elemento dalla testa della queue e lo restituisce
-* @param queue, la coda
+* @param queue
 * @param dimension dmensione della queue
 * @param head puntatore alla testa della queue
 * @param tail puntatore alla coda della queue
 * @param numElements numero di elementi all'interno della queue
 *
-*@return l'elemento estratto dalla coda
+* @return l'elemento estratto dalla coda
 */
 int* popQueue(int* queue[],int dimension, int* head, int* tail, int* numElements){
 	//head punta al primo element in coda, tail punta all'ultimo element aggiunto
@@ -577,6 +576,7 @@ int* popQueue(int* queue[],int dimension, int* head, int* tail, int* numElements
 	}
 	
 }
+
 /**
 * @brief readFile legge il file contenente la matrice di partenza e alloca la matrice
 * @param filename, nome del file

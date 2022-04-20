@@ -109,7 +109,7 @@ int main() {
 	change = ROWS % numtasks;		//conta le righe "superflue" da dividere ogni per processo
 	rowstot = ROWS;	
 	if (rank < change)
-		rows = division + 1;		//I primi "change" processi avranno una riga in piu'
+		rows = division + 1;		//I primi "change" processi avranno una riga in più
 	else
 		rows = division;
 	
@@ -185,9 +185,9 @@ int main() {
 		}
 		//printf("sottomatrici inviate\n\n");
 	}else{	//I processi non MASTER ricevono le righe che gli spettano e le salvano nella sub_matrix
-		MPI_Status stat;
+		MPI_Request req[numtasks];
 		for (i = 0; i < rows; i++) {
-			MPI_Recv(&sub_matrix[i][0], COLUMNS, MPI_INT, source, tag, MPI_COMM_WORLD, &stat);
+			MPI_Irecv(&sub_matrix[i][0], COLUMNS, MPI_INT, source, tag, MPI_COMM_WORLD, &req[rank]);
 		}
 	}
 
@@ -210,7 +210,6 @@ int main() {
 		wallClock_start = MPI_Wtime();
     	papi_time_start = PAPI_get_real_usec();
 	}
-	
 
 	while (iteration < ITER) {
 		//recupero agenti unhappy e inserimento nello stack
@@ -412,12 +411,12 @@ int main() {
 	
 	
 	MPI_Barrier(MPI_COMM_WORLD);
-	
 	if (rank == MASTER) {
 		wallClock_stop = MPI_Wtime();
     	papi_time_stop = PAPI_get_real_usec();
 		if (soluzioneGlob == numtasks){
 			printf("La soluzione trovata e\' ottima\n");
+			printf("Numero iterazioni processo MASTER: %d\n", iteration);
 		}
 		else
 			printf("La soluzione trovata non e\' ottima\n\n");

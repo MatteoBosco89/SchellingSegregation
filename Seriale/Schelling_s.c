@@ -1,5 +1,5 @@
 /**
- * @file Schelling_p.c
+ * @file Schelling_s.c
  * @author Team: Bosco, Cavoto, Ungolo
  * @brief Versione seriale modello Schelling's Segregation
  * 

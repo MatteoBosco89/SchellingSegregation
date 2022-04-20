@@ -5,7 +5,6 @@
  * 
  * 
  */
-#include <papi.h>
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -80,7 +79,6 @@ int main() {
 	int	numtasks, rank, rows, change, division, rowstot, tag = 1, source = 0, destination;
 	int iteration = 1, num_empty = 0, unhappy = 0, num_near=0, threshold = THRESHOLD;
 	int k = 0, head=0, tail=0, end=0, check=0;
-	long_long papi_time_start, papi_time_stop;
     double wallClock_start, wallClock_stop;
     double amt_same;
     float count_same = 0.0, count_diff = 0.0;
@@ -94,22 +92,13 @@ int main() {
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
 	/**
-	 * @brief Inzializzazione PAPI
-	 * 
-	 */
-    if (PAPI_library_init(PAPI_VER_CURRENT) != PAPI_VER_CURRENT) {
-        printf("Errore init PAPi\n");
-        exit(1);
-    }
-
-	/**
 	* @brief calcolo delle righe da inviare ad ogni proesso
 	*/
 	division = ROWS / numtasks;		//numero di righe per ogni processo
 	change = ROWS % numtasks;		//conta le righe "superflue" da dividere ogni per processo
 	rowstot = ROWS;	
 	if (rank < change)
-		rows = division + 1;		//I primi "change" processi avranno una riga in piu'
+		rows = division + 1;		//I primi "change" processi avranno una riga in più
 	else
 		rows = division;
 	
@@ -185,9 +174,9 @@ int main() {
 		}
 		//printf("sottomatrici inviate\n\n");
 	}else{	//I processi non MASTER ricevono le righe che gli spettano e le salvano nella sub_matrix
-		MPI_Status stat;
+		MPI_Request req[numtasks];
 		for (i = 0; i < rows; i++) {
-			MPI_Recv(&sub_matrix[i][0], COLUMNS, MPI_INT, source, tag, MPI_COMM_WORLD, &stat);
+			MPI_Irecv(&sub_matrix[i][0], COLUMNS, MPI_INT, source, tag, MPI_COMM_WORLD, &req[rank]);
 		}
 	}
 
@@ -206,34 +195,20 @@ int main() {
 	int* temp_empty = (int*)malloc(sizeof(int));
 
 	// tempi
-	if(rank == MASTER){
-		wallClock_start = MPI_Wtime();
-    	papi_time_start = PAPI_get_real_usec();
-	}
-	
+    if(rank == MASTER){
+        wallClock_start = MPI_Wtime();
+    }
 
 	while (iteration < ITER) {
 		//recupero agenti unhappy e inserimento nello stack
 		//la coda mantiene le posizioni vuote per eventuali spostamenti
 		//gli unhappy sono ricalcolati ad ogni iterazione
 		unhappy = 0; 
-		
-		// controllo dati righe di confine
-		if (numtasks > 1) {
-			if (rank == MASTER)  
-				MPI_Wait(&recvRequest[1], MPI_STATUS_IGNORE);
-
-			else if (rank != numtasks - 1)
-				MPI_Waitall(2, recvRequest, MPI_STATUS_IGNORE);
-
-			else	//ultimo processo
-				MPI_Wait(&recvRequest[0], MPI_STATUS_IGNORE);
-		}
 
 		/**
-		* @brief Ricerca degli elementi UNHAPPY
+		* @brief Ricerca degli elementi UNHAPPY NELLE RIGHE INTERNE (i = 1; i < rows - 1)
 		*/
-		for(i = 0; i < rows; i++){
+		for(i = 1; i < rows-1; i++){
 			for(j = 0; j < COLUMNS; j++){
 
 				//crea lo stack di spazi vuoti al primo giro (il valore viene poi gestito con gli scambi siccome gli spazi vuoti non cambiano di numero)
@@ -348,6 +323,182 @@ int main() {
 			}
 		}
 
+        // controllo dati righe di confine
+		if (numtasks > 1) {
+			if (rank == MASTER)  
+				MPI_Wait(&recvRequest[1], MPI_STATUS_IGNORE);
+
+			else if (rank != numtasks - 1)
+				MPI_Waitall(2, recvRequest, MPI_STATUS_IGNORE);
+
+			else	//ultimo processo
+				MPI_Wait(&recvRequest[0], MPI_STATUS_IGNORE);
+		}
+
+        /**
+         * @brief PRIMA RIGA i = 0
+         * 
+         */
+        i = 0;
+        for(j = 0; j < COLUMNS; j++){
+            if (sub_matrix[i][j] == 0 && iteration == 0) {	
+					pushQueue(empty, dim_pointers, &sub_matrix[i][j], &head, &tail, &num_empty);
+            }else if(sub_matrix[i][j] != 0){ 
+                    // controllo sinistra e destra
+                    if(j != 0){
+						if(sub_matrix[i][j - 1] != 0){
+							num_near++;
+							if(sub_matrix[i][j] != sub_matrix[i][j - 1]) count_diff++;
+							else count_same++;
+						}
+					}
+					if(j != COLUMNS-1){
+						if(sub_matrix[i][j + 1] != 0){
+							num_near++;
+							if(sub_matrix[i][j] != sub_matrix[i][j + 1]) count_diff++;
+							else count_same++;
+						}
+					}
+					if(rank != MASTER){ // controllo riga precedente
+						int * top_row = row_pred;
+						if(top_row[j] != 0){
+							num_near++;
+							if(sub_matrix[i][j] != top_row[j]) count_diff++;
+							else count_same++;
+						}
+						if(j != 0){
+							if(top_row[j - 1] != 0){
+								num_near++;
+								if(sub_matrix[i][j] != top_row[j - 1]) count_diff++;
+								else count_same++;
+							}
+						}
+						if(j != COLUMNS-1){
+							if(top_row[j + 1] != 0){
+								num_near++;
+								if(sub_matrix[i][j] != top_row[j + 1]) count_diff++;
+								else count_same++;
+							}
+						}
+					}
+					if(rank != numtasks - 1){ // controllo riga successiva
+						int* bottom_row = row_succ;
+						if(bottom_row[j] != 0){
+							num_near++;
+							if(sub_matrix[i][j] != bottom_row[j + 1]) count_diff++;
+							else count_same++;
+						}
+						if(j != 0){
+							if(bottom_row[j - 1] != 0){
+								num_near++;
+								if(sub_matrix[i][j] != bottom_row[j - 1]) count_diff++;
+								else count_same++;
+							}
+						}
+						if(j != COLUMNS - 1){
+							if(bottom_row[j + 1] != 0){
+								num_near++;
+								if(sub_matrix[i][j] != bottom_row[j + 1]) count_diff++;
+								else count_same++;
+							}
+						}
+					}
+				}
+				// controllo happyness
+				if (num_near > 0) { 
+					amt_same = count_same/(count_same + count_diff);
+					if (amt_same < threshold) { 
+						push(unhappy_spots, dim_pointers, &sub_matrix[i][j], &k);
+						unhappy++;
+					}
+					count_diff = 0;
+					count_same = 0;
+				}
+				num_near = 0;
+        }
+
+        
+        /**
+         * @brief ULTIMA RIGA i = rows - 1
+         * 
+         */
+        i = rows-1;
+        for(j = 0; j < COLUMNS; j++){
+            if (sub_matrix[i][j] == 0 && iteration == 0) {	
+					pushQueue(empty, dim_pointers, &sub_matrix[i][j], &head, &tail, &num_empty);
+            }else if(sub_matrix[i][j] != 0){ 
+                    // controllo sinistra e destra
+                    if(j != 0){
+						if(sub_matrix[i][j - 1] != 0){
+							num_near++;
+							if(sub_matrix[i][j] != sub_matrix[i][j - 1]) count_diff++;
+							else count_same++;
+						}
+					}
+					if(j != COLUMNS-1){
+						if(sub_matrix[i][j + 1] != 0){
+							num_near++;
+							if(sub_matrix[i][j] != sub_matrix[i][j + 1]) count_diff++;
+							else count_same++;
+						}
+					}
+					if(rank != MASTER){ // controllo riga precedente
+						int * top_row = row_pred;
+						if(top_row[j] != 0){
+							num_near++;
+							if(sub_matrix[i][j] != top_row[j]) count_diff++;
+							else count_same++;
+						}
+						if(j != 0){
+							if(top_row[j - 1] != 0){
+								num_near++;
+								if(sub_matrix[i][j] != top_row[j - 1]) count_diff++;
+								else count_same++;
+							}
+						}
+						if(j != COLUMNS-1){
+							if(top_row[j + 1] != 0){
+								num_near++;
+								if(sub_matrix[i][j] != top_row[j + 1]) count_diff++;
+								else count_same++;
+							}
+						}
+					}
+					if(rank != numtasks - 1){ // controllo riga successiva
+						int* bottom_row = row_succ;
+						if(bottom_row[j] != 0){
+							num_near++;
+							if(sub_matrix[i][j] != bottom_row[j + 1]) count_diff++;
+							else count_same++;
+						}
+						if(j != 0){
+							if(bottom_row[j - 1] != 0){
+								num_near++;
+								if(sub_matrix[i][j] != bottom_row[j - 1]) count_diff++;
+								else count_same++;
+							}
+						}
+						if(j != COLUMNS - 1){
+							if(bottom_row[j + 1] != 0){
+								num_near++;
+								if(sub_matrix[i][j] != bottom_row[j + 1]) count_diff++;
+								else count_same++;
+							}
+						}
+					}
+				}
+				// controllo happyness
+				if (num_near > 0) { 
+					amt_same = count_same/(count_same + count_diff);
+					if (amt_same < threshold) { 
+						push(unhappy_spots, dim_pointers, &sub_matrix[i][j], &k);
+						unhappy++;
+					}
+					count_diff = 0;
+					count_same = 0;
+				}
+				num_near = 0;
+        }
 
 		/**
 		* @brief Condizione di terminazione dei processi
@@ -391,7 +542,7 @@ int main() {
 		if(numtasks > 1)
 			exchangeRow(&sub_matrix[0][0], row_succ, &sub_matrix[rows - 1][0], row_pred, rank, numtasks, recvRequest);
 	
-		MPI_Barrier(MPI_COMM_WORLD);
+		//MPI_Barrier(MPI_COMM_WORLD);
 
 		iteration++;	
 	}
@@ -412,13 +563,11 @@ int main() {
 	
 	
 	MPI_Barrier(MPI_COMM_WORLD);
-	
 	if (rank == MASTER) {
-		wallClock_stop = MPI_Wtime();
-    	papi_time_stop = PAPI_get_real_usec();
+        wallClock_stop = MPI_Wtime();
 		if (soluzioneGlob == numtasks){
 			printf("La soluzione trovata e\' ottima\n");
-		}
+        }
 		else
 			printf("La soluzione trovata non e\' ottima\n\n");
 		printf ("Tempo di esecuzione (secondi): %f\n", wallClock_stop - wallClock_start);

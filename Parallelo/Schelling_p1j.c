@@ -263,7 +263,7 @@ int main() {
 						int* bottom_row;
 						// ultima riga sub_matrix e non ultimo processo
 						if(i == rows - 1 && rank != numtasks - 1){
-							bottom_row = row_succ; // riga successiva (passata da processo successivo)ì
+							bottom_row = row_succ; // riga successiva (passata da processo successivo)
 						}else { // riga sub_matrix altrimenti
 							bottom_row = sub_matrix[i + 1];
 						}
@@ -382,7 +382,7 @@ int main() {
 						}
 					}
 					if(rank != numtasks - 1){ // controllo riga successiva
-						int* bottom_row = row_succ;
+						int* bottom_row = sub_matrix[i + 1];
 						if(bottom_row[j] != 0){
 							num_near++;
 							if(sub_matrix[i][j] != bottom_row[j + 1]) count_diff++;
@@ -443,7 +443,7 @@ int main() {
 						}
 					}
 					if(rank != MASTER){ // controllo riga precedente
-						int * top_row = row_pred;
+						int * top_row = sub_matrix[i - 1];;
 						if(top_row[j] != 0){
 							num_near++;
 							if(sub_matrix[i][j] != top_row[j]) count_diff++;

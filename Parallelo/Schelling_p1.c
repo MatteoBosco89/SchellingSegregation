@@ -78,11 +78,12 @@ int main() {
 	 */
 
 	int	numtasks, rank, rows, change, division, rowstot, tag = 1, source = 0, destination;
-	int iteration = 1, num_empty = 0, unhappy = 0, num_near=0, threshold = THRESHOLD;
+	int iteration = 0, num_empty = 0, unhappy = 0, num_near=0;
 	int k = 0, head=0, tail=0, end=0, check=0;
 	long_long papi_time_start, papi_time_stop;
     double wallClock_start, wallClock_stop;
     double amt_same;
+	float threshold = THRESHOLD;
     float count_same = 0.0, count_diff = 0.0;
 	
 	/**
@@ -228,82 +229,64 @@ int main() {
 					pushQueue(empty, dim_pointers, &sub_matrix[i][j], &head, &tail, &num_empty);
 					
 				}else if(sub_matrix[i][j] != 0){
+					//printf("diverso da zero\n");
 					//tutti i processi tranne il MASTER e l'ultimo processo hanno due righe aggiuntive inviate dai processi adiacenti
 					// il processo MASTER ha solo la riga inferiore aggiuntiva (row_succ)
 					// l'ultimo processo ha solo la riga superiore aggiuntiva (row_pred)
-					if(rank == MASTER && i == 0){
-						// NO OP
-						// il processo MASTER non controlla la riga precedente 
-					}else{
-						int * top_row;
-						//se la riga e' 0 e non MASTER controlla la riga precedente
-						if(i == 0 && rank != MASTER){
-							top_row = row_pred;
-						}else{ //altrimenti prendiamo il processo controlla la riga della propria sub_matrix
-							top_row = sub_matrix[i - 1];
-						}
-						//posizione in alto
-						if(top_row[j] != 0){
+					int * top_row;
+					top_row = sub_matrix[i - 1];
+					//posizione in alto
+					if(top_row[j] != 0){
+						num_near++;
+						if(sub_matrix[i][j] != top_row[j]) count_diff++;
+						else count_same++;
+					}
+					//se non siamo nella prima colonna
+					if(j != 0){
+						//posizione in alto a sinistra
+						if(top_row[j - 1] != 0){
 							num_near++;
-							if(sub_matrix[i][j] != top_row[j]) count_diff++;
+							if(sub_matrix[i][j] != top_row[j - 1]) count_diff++;
 							else count_same++;
 						}
-						//se non siamo nella prima colonna
-						if(j != 0){
-							//posizione in alto a sinistra
-							if(top_row[j - 1] != 0){
-								num_near++;
-								if(sub_matrix[i][j] != top_row[j - 1]) count_diff++;
-								else count_same++;
-							}
-						}
-						//se non siamo nell'ultima colonna
-						if(j != COLUMNS-1){
-							//posizione in alto a destra
-							if(top_row[j + 1] != 0){
-								num_near++;
-								if(sub_matrix[i][j] != top_row[j + 1]) count_diff++;
-								else count_same++;
-							}
+					}
+					//se non siamo nell'ultima colonna
+					if(j != COLUMNS-1){
+						//posizione in alto a destra
+						if(top_row[j + 1] != 0){
+							num_near++;
+							if(sub_matrix[i][j] != top_row[j + 1]) count_diff++;
+							else count_same++;
 						}
 					}
-						
-					if(rank == numtasks - 1 && i == rows - 1){
-						// ultimo processo non controlla riga successiva
-					}else{
-
-						int* bottom_row;
-						// ultima riga sub_matrix e non ultimo processo
-						if(i == rows - 1 && rank != numtasks - 1){
-							bottom_row = row_succ; // riga successiva (passata da processo successivo)ì
-						}else { // riga sub_matrix altrimenti
-							bottom_row = sub_matrix[i + 1];
+											
+					int* bottom_row;
+					bottom_row = sub_matrix[i + 1];
+					//posizione in basso
+					if(bottom_row[j] != 0){
+						num_near++;
+						if(sub_matrix[i][j] != bottom_row[j + 1]) count_diff++;
+						else count_same++;
+					}
+					//se non ci troviamo nella prima colonna
+					if(j != 0){
+						//posizione in basso a sinistra
+						if(bottom_row[j - 1] != 0){
+							num_near++;
+							if(sub_matrix[i][j] != bottom_row[j - 1]) count_diff++;
+							else count_same++;
 						}
-						//posizione in basso
-						if(bottom_row[j] != 0){
+					}
+					//se non ci troviamo nell'ultima colonna
+					if(j != COLUMNS - 1){
+						//posizione in basso a destra
+						if(bottom_row[j + 1] != 0){
 							num_near++;
 							if(sub_matrix[i][j] != bottom_row[j + 1]) count_diff++;
 							else count_same++;
 						}
-						//se non ci troviamo nella prima colonna
-						if(j != 0){
-							//posizione in basso a sinistra
-							if(bottom_row[j - 1] != 0){
-								num_near++;
-								if(sub_matrix[i][j] != bottom_row[j - 1]) count_diff++;
-								else count_same++;
-							}
-						}
-						//se non ci troviamo nell'ultima colonna
-						if(j != COLUMNS - 1){
-							//posizione in basso a destra
-							if(bottom_row[j + 1] != 0){
-								num_near++;
-								if(sub_matrix[i][j] != bottom_row[j + 1]) count_diff++;
-								else count_same++;
-							}
-						}
 					}
+					
 					//posizione a sinistra
 					if(j != 0){
 						if(sub_matrix[i][j - 1] != 0){
@@ -320,7 +303,9 @@ int main() {
 							else count_same++;
 						}
 					}
-				}
+				}	
+				//if(num_near > 0) printf("num_near %d\n", num_near);
+				
 				// controllo happyness
 				if (num_near > 0) { // almeno un elmento adiacente, altrimenti agente sicuramente happy
 					amt_same = count_same/(count_same + count_diff); // calcolo fattore di unhappyness
@@ -328,6 +313,8 @@ int main() {
 						push(unhappy_spots, dim_pointers, &sub_matrix[i][j], &k);
 						unhappy++;
 					}
+					//printf("amt_same %f, count_same %f, count_diff %f\n", amt_same, count_same, count_diff);
+					amt_same = 0;
 					count_diff = 0;
 					count_same = 0;
 				}
@@ -335,7 +322,7 @@ int main() {
 			}
 		}
 
-		// controllo dati righe di confine
+        // controllo dati righe di confine
 		if (numtasks > 1) {
 			if (rank == MASTER)  
 				MPI_Wait(&recvRequest[1], MPI_STATUS_IGNORE);
@@ -394,7 +381,7 @@ int main() {
 						}
 					}
 					if(rank != numtasks - 1){ // controllo riga successiva
-						int* bottom_row = row_succ;
+						int* bottom_row = sub_matrix[i + 1];
 						if(bottom_row[j] != 0){
 							num_near++;
 							if(sub_matrix[i][j] != bottom_row[j + 1]) count_diff++;
@@ -423,6 +410,7 @@ int main() {
 						push(unhappy_spots, dim_pointers, &sub_matrix[i][j], &k);
 						unhappy++;
 					}
+					amt_same = 0;
 					count_diff = 0;
 					count_same = 0;
 				}
@@ -455,7 +443,7 @@ int main() {
 						}
 					}
 					if(rank != MASTER){ // controllo riga precedente
-						int * top_row = row_pred;
+						int * top_row = sub_matrix[i - 1];;
 						if(top_row[j] != 0){
 							num_near++;
 							if(sub_matrix[i][j] != top_row[j]) count_diff++;
@@ -506,6 +494,7 @@ int main() {
 						push(unhappy_spots, dim_pointers, &sub_matrix[i][j], &k);
 						unhappy++;
 					}
+					amt_same = 0;
 					count_diff = 0;
 					count_same = 0;
 				}
@@ -516,7 +505,7 @@ int main() {
 		* @brief Condizione di terminazione dei processi
 		*/
 		//dopo aver setacciato tutta la sub_matrix: se non ci sono spazi vuoti, se ci sono solo spazi o se non ci sono elementi infelici, termina
-		if (unhappy == 0 || num_empty == dim_pointers - 1|| num_empty == 0 ) {
+		if (unhappy == 0) {
 			if (numtasks == 1)
 				break;
 			else
@@ -590,10 +579,6 @@ int main() {
 	free(sub_matrix);
 	free(row_pred);
 	free(row_succ);
-	free(empty);
-	free(unhappy_spots);
-	free(temp_unhappy_spots);
-	free(temp_empty);
 
 	MPI_Finalize();
 
@@ -649,8 +634,6 @@ int* push(int* stack[], int dimension, int* element, int* top){
 		*top= *top+1;
 		return stack[*top - 1];	//restituisci il puntatore all'elemento che ho appena aggiunto
 	}
-	else
-		printf("Stack pieno!\n");
 	return NULL;
 }
 
@@ -666,8 +649,6 @@ int* pop(int* stack[], int* top){
 		*top = *top-1;
 		return stack[*top];			//puntatore all'element che ho appena rimosso (top punta alla prima cella libera)
 	}
-	else
-		printf("Lo stack e' temp_empty\n");
 	return NULL;
 }
 
@@ -685,7 +666,6 @@ int* pop(int* stack[], int* top){
 int* pushQueue(int* queue[], int dimension, int* element, int* head, int* tail, int* numElements){
 	//head punta al primo element in coda, tail all'ultimo elemento inserito
 	if(*numElements==dimension-1){
-		printf("la coda e' piena!\n");
 		return NULL;
 	}
 	else{
@@ -735,7 +715,6 @@ int* popQueue(int* queue[],int dimension, int* head, int* tail, int* numElements
 		}
 	}
 	else {
-		printf("La coda e' vuota\n");
 		return NULL;
 	}
 	
@@ -766,15 +745,11 @@ int readFile(char* filename){
 		return -1;
 	}
 	char c;
-	int temp;
 	
 	for(i = 0; i < ROWS; i++){
 		for(j = 0; j < COLUMNS; j++){
 			fscanf(file, "%c", &c);
-			if(c == EMPTY) temp = 0;
-			if(c == WHITE) temp = 1;
-			else temp = 2;
-			temp_matrix[i][j] = temp;
+			temp_matrix[i][j] = c - '0';
 		}
 		fscanf(file, "%c", &c);
 	}
